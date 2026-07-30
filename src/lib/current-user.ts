@@ -14,6 +14,7 @@ export interface CurrentUser {
 const PLACEHOLDER_CLIENT_ID = 'your-google-client-id';
 const PLACEHOLDER_CLIENT_SECRET = 'your-google-client-secret';
 const DEVELOPMENT_EMAIL = 'local-dev@chi-tieu.local';
+let developmentUserPromise: Promise<CurrentUser | null> | undefined;
 
 export function isGoogleAuthConfigured() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -81,9 +82,17 @@ async function getDevelopmentUser(): Promise<CurrentUser | null> {
   };
 }
 
+function getCachedDevelopmentUser() {
+  developmentUserPromise ??= getDevelopmentUser().catch((error: unknown) => {
+    developmentUserPromise = undefined;
+    throw error;
+  });
+  return developmentUserPromise;
+}
+
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   if (!isGoogleAuthConfigured()) {
-    return getDevelopmentUser();
+    return getCachedDevelopmentUser();
   }
 
   const session = await auth();

@@ -1,0 +1,52 @@
+[
+  {
+    "category": "Đào góp",
+    "budget_amount": 4613000,
+    "warning_percent": 80
+  },
+  {
+    "category": "Nhà thuê",
+    "budget_amount": 3000000,
+    "warning_percent": 80
+  },
+  {
+    "category": "Ăn uống",
+    "budget_amount": 3900000,
+    "warning_percent": 80,
+    "daily_limit": 130000
+  },
+  {
+    "category": "Xe & xăng",
+    "budget_amount": 880000,
+    "warning_percent": 80
+  },
+  {
+    "category": "Vợ",
+    "budget_amount": 4000000,
+    "warning_percent": 80
+  },
+  {
+    "category": "Chuyển về nhà",
+    "budget_amount": 2000000,
+    "warning_percent": 80
+  },
+  {
+    "category": "Thể thao",
+    "budget_amount": 400000,
+    "warning_percent": 80,
+    "frequency_limit": 2,
+    "frequency_period": "week"
+  },
+  {
+    "category": "Nhậu",
+    "budget_amount": 800000,
+    "warning_percent": 80,
+    "frequency_limit": 2,
+    "frequency_period": "month"
+  },
+  {
+    "category": "AI",
+    "budget_amount": 800000,
+    "warning_percent": 80
+  }
+]

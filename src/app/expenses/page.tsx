@@ -1,474 +1,164 @@
-'use client'
+'use client';
 
-import { useState, useEffect, useCallback } from 'react'
-import { Card } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { formatCurrency, getCurrentMonth, formatShortDate, cn } from '@/lib/utils'
-import { MonthPicker } from '@/components/MonthPicker'
-import { Plus, Trash2 } from 'lucide-react'
-import { useToast } from '@/hooks/useToast'
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
+import { MonthPicker } from '@/components/MonthPicker';
+import { CategoryIcon } from '@/components/CategoryIcon';
+import { ReceiptText, Trash2 } from 'lucide-react';
+import { cn, formatCurrency, formatShortDate, getCurrentMonth } from '@/lib/utils';
+import { useToast } from '@/hooks/useToast';
 
-interface Category {
-  id: string
-  name: string
-  emoji: string
-  color: string
-}
-
-interface Expense {
-  id: string
-  amount: number
-  description: string
-  note: string | null
-  date: string
-  category_id: string
-  category: Category
-  type: 'income' | 'expense'
-}
+interface Category { id: string; name: string; color: string; }
+interface Expense { id: string; amount: number; description: string; note: string | null; date: string; category: Category; type: 'income' | 'expense'; }
 
 export default function ExpensesPage() {
-  const [month, setMonth] = useState(getCurrentMonth())
-  const [activeCategoryId, setActiveCategoryId] = useState<string>('all')
-  const [expenses, setExpenses] = useState<Expense[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
-  const [totalAmount, setTotalAmount] = useState(0)
-  const [totalIncome, setTotalIncome] = useState(0)
-  const [totalExpense, setTotalExpense] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
-  const { showToast } = useToast()
-
-  // Form state
-  const [expenseType, setExpenseType] = useState<'expense' | 'income'>('expense')
-  const [amount, setAmount] = useState('')
-  const [description, setDescription] = useState('')
-  const [note, setNote] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('')
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [month, setMonth] = useState(getCurrentMonth());
+  const [activeCategoryId, setActiveCategoryId] = useState('all');
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [totalAmount, setTotalAmount] = useState(0);
+  const [totalIncome, setTotalIncome] = useState(0);
+  const [totalExpense, setTotalExpense] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const fetchCategories = useCallback(async () => {
-    try {
-      const res = await fetch('/api/categories')
-      if (res.ok) {
-        const data = await res.json()
-        setCategories(data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch categories', error)
-    }
-  }, [])
+    const response = await fetch('/api/categories');
+    if (response.ok) setCategories(await response.json());
+  }, []);
 
   const fetchExpenses = useCallback(async () => {
-    setIsLoading(true)
+    setIsLoading(true);
     try {
-      let url = `/api/expenses?month=${month}`
-      if (activeCategoryId !== 'all') {
-        url += `&category_id=${activeCategoryId}`
-      }
-      const res = await fetch(url)
-      if (res.ok) {
-        const data = await res.json()
-        const items: Expense[] = (data.items || []).map((item: Record<string, unknown>) => ({
-          id: String(item.id),
-          amount: Number(item.amount || 0),
-          description: String(item.description || ''),
-          note: item.note ? String(item.note) : null,
-          date: String(item.expense_date || item.date || ''),
-          category_id: String(item.category_id || ''),
-          type: item.type === 'income' ? 'income' : 'expense',
-          category: {
-            id: String(item.category_id || ''),
-            name: String(item.category_name || (item.category as Category)?.name || 'Khác'),
-            emoji: String(item.category_icon || (item.category as Category)?.emoji || '📦'),
-            color: String(item.category_color || (item.category as Category)?.color || '#64748b')
-          }
-        }))
-        setExpenses(items)
-        setTotalAmount(data.total ?? items.reduce((sum, i) => sum + (i.type === 'income' ? i.amount : -i.amount), 0))
-        setTotalIncome(data.totalIncome ?? items.filter(i => i.type === 'income').reduce((s, i) => s + i.amount, 0))
-        setTotalExpense(data.totalExpense ?? items.filter(i => i.type === 'expense').reduce((s, i) => s + i.amount, 0))
-      }
+      const params = new URLSearchParams({ month });
+      if (activeCategoryId !== 'all') params.set('category_id', activeCategoryId);
+      const response = await fetch(`/api/expenses?${params}`);
+      if (!response.ok) throw new Error('Failed to load expenses');
+      const data: { items: Record<string, unknown>[]; total: number; totalIncome: number; totalExpense: number } = await response.json();
+      setExpenses((data.items ?? []).map((item) => ({
+        id: String(item.id), amount: Number(item.amount) || 0, description: String(item.description || ''),
+        note: item.note ? String(item.note) : null, date: String(item.expense_date || ''),
+        type: item.type === 'income' ? 'income' : 'expense',
+        category: { id: String(item.category_id || ''), name: String(item.category_name || 'Khác'), color: String(item.category_color || '#8493a3') },
+      })));
+      setTotalAmount(Number(data.total) || 0);
+      setTotalIncome(Number(data.totalIncome) || 0);
+      setTotalExpense(Number(data.totalExpense) || 0);
     } catch (error) {
-      console.error('Failed to fetch expenses', error)
-      showToast('Lỗi khi tải dữ liệu chi tiêu', 'error')
+      console.error(error);
+      showToast('Không thể tải giao dịch', 'error');
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }, [month, activeCategoryId, showToast])
+  }, [activeCategoryId, month, showToast]);
 
   useEffect(() => {
-    // Initial remote data synchronization.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchCategories()
-  }, [fetchCategories])
-
+    fetchCategories().catch(console.error);
+  }, [fetchCategories]);
   useEffect(() => {
-    // Refetch when the selected month or filters change.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchExpenses()
-  }, [fetchExpenses])
+    fetchExpenses();
+  }, [fetchExpenses]);
 
-  const handleAddExpense = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!amount || !description || !selectedCategory || !date) {
-      showToast('Vui lòng điền đầy đủ thông tin bắt buộc', 'error')
-      return
-    }
-
-    setIsSubmitting(true)
+  const handleDelete = async () => {
+    if (!pendingDeleteId) return;
     try {
-      const res = await fetch('/api/expenses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: Number(amount.replace(/[^0-9]/g, '')),
-          description,
-          note,
-          category_id: selectedCategory,
-          expense_date: date,
-          type: expenseType
-        })
-      })
-
-      if (res.ok) {
-        showToast(`Thêm ${expenseType === 'income' ? 'thu nhập' : 'chi tiêu'} thành công`, 'success')
-        setIsAddDialogOpen(false)
-        resetForm()
-        fetchExpenses()
-      } else {
-        showToast('Lỗi khi thêm mới', 'error')
-      }
+      const response = await fetch(`/api/expenses/${pendingDeleteId}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Failed to delete expense');
+      setPendingDeleteId(null);
+      showToast('Đã xóa giao dịch', 'success');
+      fetchExpenses();
     } catch (error) {
-      console.error('Error adding expense:', error)
-      showToast('Đã có lỗi xảy ra', 'error')
-    } finally {
-      setIsSubmitting(false)
+      console.error(error);
+      showToast('Không thể xóa giao dịch', 'error');
     }
-  }
+  };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa mục này?')) return
+  const { groups, dates } = useMemo(() => {
+    const nextGroups = expenses.reduce<Record<string, { net: number; items: Expense[] }>>((result, expense) => {
+      const date = expense.date.split('T')[0] || expense.date;
+      const group = result[date] ?? { net: 0, items: [] };
+      group.items.push(expense);
+      group.net += expense.type === 'income' ? expense.amount : -expense.amount;
+      result[date] = group;
+      return result;
+    }, {});
 
-    try {
-      const res = await fetch(`/api/expenses/${id}`, {
-        method: 'DELETE'
-      })
-      if (res.ok) {
-        showToast('Đã xóa', 'success')
-        fetchExpenses()
-      } else {
-        showToast('Lỗi khi xóa', 'error')
-      }
-    } catch (error) {
-      console.error('Error deleting expense:', error)
-      showToast('Đã có lỗi xảy ra', 'error')
-    }
-  }
-
-  const resetForm = () => {
-    setExpenseType('expense')
-    setAmount('')
-    setDescription('')
-    setNote('')
-    setSelectedCategory('')
-    setDate(new Date().toISOString().split('T')[0])
-  }
-
-  // Format amount input with dots
-  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawValue = e.target.value.replace(/[^0-9]/g, '')
-    if (rawValue) {
-      setAmount(Number(rawValue).toLocaleString('vi-VN'))
-    } else {
-      setAmount('')
-    }
-  }
-
-  // Group expenses by date
-  const groupedExpenses = expenses.reduce((acc, expense) => {
-    const expenseDate = expense.date.split('T')[0] || expense.date
-    if (!acc[expenseDate]) {
-      acc[expenseDate] = { net: 0, items: [] }
-    }
-    acc[expenseDate].items.push(expense)
-    if (expense.type === 'income') {
-      acc[expenseDate].net += expense.amount
-    } else {
-      acc[expenseDate].net -= expense.amount
-    }
-    return acc
-  }, {} as Record<string, { net: number; items: Expense[] }>)
-
-  const sortedDates = Object.keys(groupedExpenses).sort(
-    (a, b) => new Date(b).getTime() - new Date(a).getTime()
-  )
+    return {
+      groups: nextGroups,
+      dates: Object.keys(nextGroups).sort((a, b) => b.localeCompare(a)),
+    };
+  }, [expenses]);
 
   return (
-    <div className="pb-nav max-w-lg mx-auto min-h-screen bg-background">
-      {/* Header Section */}
-      <div className="px-4 pt-8 pb-6 bg-white border-b border-border sticky top-0 z-10">
-        <h1 className="text-xl font-medium text-center mb-4">Chi tiêu & Thu nhập</h1>
-        
-        <div className="flex flex-col items-center mb-4">
-          <span className="text-sm text-muted-foreground mb-1">Số dư ròng tháng này</span>
-          <span className={cn(
-            "text-4xl font-bold tabular-nums tracking-tight",
-            totalAmount >= 0 ? "text-[#00BC7C]" : "text-[#FE5A61]"
-          )}>
-            {totalAmount >= 0 ? `+${formatCurrency(totalAmount)}` : `-${formatCurrency(Math.abs(totalAmount))}`}
-          </span>
+    <div className="min-h-screen w-full max-w-lg bg-[#f7f9fb] pb-nav">
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl">
+        <div className="flex items-center justify-between gap-3">
+          <div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Dòng tiền</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Chi tiêu & thu nhập</h1></div>
+          <MonthPicker month={month} onChange={setMonth} />
         </div>
-
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <div className="bg-[#00BC7C]/10 border border-[#00BC7C]/20 rounded-2xl p-3 flex flex-col items-center">
-            <span className="text-xs text-muted-foreground mb-0.5">Thu nhập</span>
-            <span className="text-base font-semibold text-[#00BC7C] tabular-nums">
-              +{formatCurrency(totalIncome)}
-            </span>
+        <section className="mt-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3.5">
+          <p className="text-[11px] text-slate-400">Số dư ròng tháng này</p>
+          <p className={cn('mt-1 text-[27px] font-semibold leading-none tracking-[-0.05em] tabular-nums', totalAmount >= 0 ? 'text-[#00a970]' : 'text-[#f15b64]')}>{totalAmount >= 0 ? '+' : '−'}{formatCurrency(Math.abs(totalAmount))}</p>
+          <div className="mt-3 grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 pt-3">
+            <SummaryItem label="Tổng thu" value={totalIncome} tone="income" />
+            <SummaryItem label="Tổng chi" value={totalExpense} tone="expense" className="pl-4" />
           </div>
-          <div className="bg-[#FE5A61]/10 border border-[#FE5A61]/20 rounded-2xl p-3 flex flex-col items-center">
-            <span className="text-xs text-muted-foreground mb-0.5">Chi tiêu</span>
-            <span className="text-base font-semibold text-[#FE5A61] tabular-nums">
-              -{formatCurrency(totalExpense)}
-            </span>
+        </section>
+        <div className="relative mt-3">
+          <div className="no-scrollbar flex gap-2 overflow-x-auto pr-7">
+            <FilterChip active={activeCategoryId === 'all'} label="Tất cả" onClick={() => setActiveCategoryId('all')} />
+            {categories.map((category) => <FilterChip key={category.id} active={activeCategoryId === category.id} label={category.name} color={category.color} onClick={() => setActiveCategoryId(category.id)} />)}
           </div>
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[#f7f9fb] to-transparent" />
         </div>
+      </header>
 
-        <MonthPicker month={month} onChange={setMonth} />
-      </div>
+      <main className="space-y-5 px-4 py-5">
+        {isLoading ? <div className="space-y-3">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-slate-200/70" />)}</div> : null}
+        {!isLoading && dates.length === 0 ? <EmptyTransactions /> : null}
+        {!isLoading && dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} onDelete={setPendingDeleteId} />)}
+      </main>
 
-      {/* Category Filter */}
-      <div className="py-4 bg-white sticky top-[200px] z-10 border-b border-border shadow-sm">
-        <ScrollArea className="w-full whitespace-nowrap">
-          <div className="flex w-max space-x-2 px-4">
-            <Badge
-              variant={activeCategoryId === 'all' ? 'default' : 'outline'}
-              className="px-4 py-2 text-sm cursor-pointer rounded-full transition-all"
-              onClick={() => setActiveCategoryId('all')}
-            >
-              Tất cả
-            </Badge>
-            {categories.map((cat) => (
-              <Badge
-                key={cat.id}
-                variant={activeCategoryId === cat.id ? 'default' : 'outline'}
-                className="px-4 py-2 text-sm cursor-pointer rounded-full transition-all flex items-center gap-1.5"
-                onClick={() => setActiveCategoryId(cat.id)}
-              >
-                <span>{cat.emoji}</span>
-                <span>{cat.name}</span>
-              </Badge>
-            ))}
-          </div>
-          <ScrollBar orientation="horizontal" className="invisible" />
-        </ScrollArea>
-      </div>
-
-      {/* Expenses List */}
-      <div className="p-4 space-y-6">
-        {isLoading ? (
-          <div className="flex justify-center py-10">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          </div>
-        ) : sortedDates.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center opacity-70">
-            <div className="text-6xl mb-4">💸</div>
-            <h3 className="text-lg font-medium mb-1">Chưa có chi tiêu nào</h3>
-            <p className="text-sm text-muted-foreground">Bạn chưa ghi nhận chi tiêu nào trong tháng này.</p>
-          </div>
-        ) : (
-          sortedDates.map((dateStr) => {
-            const group = groupedExpenses[dateStr]
-            return (
-              <div key={dateStr} className="space-y-3">
-                {/* Date Header */}
-                <div className="flex justify-between items-center text-sm font-medium text-muted-foreground px-2">
-                  <div className="flex items-center gap-2">
-                    <span className="bg-muted px-2 py-1 rounded-md text-foreground">
-                      {formatShortDate(dateStr)}
-                    </span>
-                  </div>
-                  <span className={cn(
-                    "font-semibold tabular-nums",
-                    group.net >= 0 ? "text-[#00BC7C]" : "text-[#FE5A61]"
-                  )}>
-                    {group.net >= 0 ? `+${formatCurrency(group.net)}` : `-${formatCurrency(Math.abs(group.net))}`}
-                  </span>
-                </div>
-
-                {/* Expenses in Date */}
-                <Card className="rounded-2xl overflow-hidden bg-card/50 shadow-sm border-border">
-                  <div className="divide-y divide-border">
-                    {group.items.map((expense) => (
-                      <div key={expense.id} className="flex items-center p-4 hover:bg-muted/30 transition-colors group">
-                        <div 
-                          className="w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 mr-3"
-                          style={{ backgroundColor: `${expense.category?.color || '#3b82f6'}20` }}
-                        >
-                          {expense.category?.emoji || '💰'}
-                        </div>
-                        
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-foreground truncate">{expense.description}</p>
-                          {expense.note && (
-                            <p className="text-xs text-muted-foreground truncate mt-0.5">{expense.note}</p>
-                          )}
-                        </div>
-                        
-                        <div className="flex flex-col items-end shrink-0 ml-3">
-                          <span className={cn(
-                            "font-semibold tabular-nums",
-                            expense.type === 'income' ? "text-[#00BC7C]" : "text-[#FE5A61]"
-                          )}>
-                            {expense.type === 'income' ? `+${formatCurrency(expense.amount)}` : `-${formatCurrency(expense.amount)}`}
-                          </span>
-                        </div>
-
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 ml-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => handleDelete(expense.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              </div>
-            )
-          })
-        )}
-      </div>
-
-      {/* Floating Action Button */}
-      <Button
-        className="fixed bottom-20 right-4 h-14 w-14 rounded-full shadow-lg shadow-primary/30 z-20"
-        size="icon"
-        onClick={() => setIsAddDialogOpen(true)}
-      >
-        <Plus className="h-6 w-6" />
-      </Button>
-
-      {/* Add Expense Dialog */}
-      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent className="sm:max-w-[425px] rounded-2xl w-[95%] p-0 overflow-hidden bg-card border-border">
-          <DialogHeader className="p-6 pb-2 border-b border-border bg-muted/20">
-            <DialogTitle className="text-xl">Thêm mới giao dịch</DialogTitle>
-          </DialogHeader>
-          
-          <form onSubmit={handleAddExpense} className="p-6 space-y-5">
-            <div className="grid grid-cols-2 gap-2 bg-muted/40 p-1 rounded-xl">
-              <Button
-                type="button"
-                variant={expenseType === 'expense' ? 'default' : 'ghost'}
-                className={cn(
-                  "rounded-lg text-sm font-medium h-9",
-                  expenseType === 'expense' && "bg-[#FE5A61] hover:bg-[#FE5A61]/90 text-white"
-                )}
-                onClick={() => setExpenseType('expense')}
-              >
-                Chi tiêu
-              </Button>
-              <Button
-                type="button"
-                variant={expenseType === 'income' ? 'default' : 'ghost'}
-                className={cn(
-                  "rounded-lg text-sm font-medium h-9",
-                  expenseType === 'income' && "bg-[#00BC7C] hover:bg-[#00BC7C]/90 text-white"
-                )}
-                onClick={() => setExpenseType('income')}
-              >
-                Thu nhập
-              </Button>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="amount">Số tiền (VNĐ)</Label>
-              <div className="relative">
-                <Input
-                  id="amount"
-                  placeholder="0"
-                  value={amount}
-                  onChange={handleAmountChange}
-                  className={cn(
-                    "pl-8 text-lg font-medium",
-                    expenseType === 'income' ? "text-[#00BC7C]" : "text-[#FE5A61]"
-                  )}
-                  inputMode="numeric"
-                />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                  ₫
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="description">Mô tả</Label>
-              <Input
-                id="description"
-                placeholder="VD: Ăn trưa, Cà phê..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="category">Danh mục</Label>
-              <Select value={selectedCategory} onValueChange={(val) => setSelectedCategory(val ?? '')}>
-                <SelectTrigger id="category">
-                  <SelectValue placeholder="Chọn danh mục" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      <div className="flex items-center gap-2">
-                        <span>{cat.emoji}</span>
-                        <span>{cat.name}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="date">Ngày</Label>
-              <Input
-                id="date"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="note">Ghi chú (Tùy chọn)</Label>
-              <Textarea
-                id="note"
-                placeholder="Thêm chi tiết về khoản chi này..."
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                className="resize-none"
-                rows={2}
-              />
-            </div>
-
-            <Button type="submit" className="w-full mt-4" disabled={isSubmitting}>
-              {isSubmitting ? 'Đang thêm...' : 'Thêm chi tiêu'}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <AlertDialog open={pendingDeleteId !== null} onOpenChange={(open) => !open && setPendingDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Xóa giao dịch?</AlertDialogTitle><AlertDialogDescription>Giao dịch sẽ bị xóa khỏi số dư và báo cáo ngân sách.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel>Hủy</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={handleDelete}>Xóa giao dịch</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
-  )
+  );
+}
+
+function SummaryItem({ label, value, tone, className }: { label: string; value: number; tone: 'income' | 'expense'; className?: string }) {
+  return <div className={cn('min-w-0', className)}><p className="text-[11px] text-slate-400">{label}</p><p className={cn('mt-0.5 truncate text-sm font-semibold tabular-nums', tone === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>{tone === 'income' ? '+' : '−'}{formatCurrency(value)}</p></div>;
+}
+
+function FilterChip({ active, label, color, onClick }: { active: boolean; label: string; color?: string; onClick: () => void }) {
+  return <button type="button" onClick={onClick} className={cn('flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors', active ? 'border-[#00bc7c] bg-[#00bc7c] text-white' : 'border-slate-200 bg-white text-slate-600')}>
+    {color ? <span className="size-1.5 rounded-full" style={{ backgroundColor: active ? 'white' : color }} /> : null}{label}
+  </button>;
+}
+
+function TransactionGroup({ date, group, onDelete }: { date: string; group: { net: number; items: Expense[] }; onDelete: (id: string) => void }) {
+  return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+    <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5"><p className="text-xs font-semibold text-slate-600">{formatShortDate(date)}</p><p className={cn('text-xs font-semibold tabular-nums', group.net >= 0 ? 'text-[#00a970]' : 'text-[#f15b64]')}>{group.net >= 0 ? '+' : '−'}{formatCurrency(Math.abs(group.net))}</p></div>
+    <div className="divide-y divide-slate-100">{group.items.map((expense) => <TransactionRow key={expense.id} expense={expense} onDelete={() => onDelete(expense.id)} />)}</div>
+  </section>;
+}
+
+function TransactionRow({ expense, onDelete }: { expense: Expense; onDelete: () => void }) {
+  return <div className="group flex min-w-0 items-center gap-3 px-3.5 py-3">
+    <CategoryIcon name={expense.category.name} color={expense.category.color} className="size-9 rounded-xl" iconClassName="size-4" />
+    <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-700">{expense.description}</p><p className="mt-0.5 truncate text-[11px] text-slate-400">{expense.note || expense.category.name}</p></div>
+    <p className={cn('shrink-0 whitespace-nowrap text-[13px] font-semibold tabular-nums', expense.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>{expense.type === 'income' ? '+' : '−'}{formatCurrency(expense.amount)}</p>
+    <Button type="button" variant="ghost" size="icon-sm" onClick={onDelete} className="ml-0.5 shrink-0 text-slate-300 hover:bg-rose-50 hover:text-[#f15b64]" aria-label={`Xóa ${expense.description}`}><Trash2 className="size-3.5" /></Button>
+  </div>;
+}
+
+function EmptyTransactions() {
+  return <div className="flex flex-col items-center py-20 text-center"><span className="flex size-14 items-center justify-center rounded-3xl bg-emerald-50 text-[#00bc7c]"><ReceiptText className="size-6" /></span><h2 className="mt-4 text-base font-semibold text-slate-700">Chưa có giao dịch</h2><p className="mt-1 max-w-56 text-sm leading-5 text-slate-400">Dùng nút Ghi nhanh ở giữa thanh điều hướng để thêm giao dịch.</p></div>;
 }

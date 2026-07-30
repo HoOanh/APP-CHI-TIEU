@@ -14,22 +14,9 @@ export async function GET(request: NextRequest) {
 
     const db = await getDb();
 
-    // Get budgets with total monthly spent
-    const query = `
-      SELECT b.*, c.name as category_name, c.icon as category_icon, c.color as category_color,
-      COALESCE((SELECT SUM(amount) FROM expenses e WHERE e.user_id = b.user_id AND e.category_id = b.category_id AND e.type = 'expense' AND strftime('%Y-%m', e.expense_date) = b.month), 0) as spent_amount
-      FROM budget_jars b
-      LEFT JOIN categories c ON b.category_id = c.id
-      WHERE b.user_id = ? AND b.month = ?
-    `;
-    const result = await db.execute({ sql: query, args: [user.id, month] });
-
-    // For each budget, calculate daily/weekly/monthly frequency alerts
     const today = new Date().toISOString().split('T')[0];
     const todayDate = new Date(today);
-
-    // Current week boundaries (Mon-Sun)
-    const dayOfWeek = todayDate.getDay(); // 0=Sun
+    const dayOfWeek = todayDate.getDay();
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     const weekStart = new Date(todayDate);
     weekStart.setDate(todayDate.getDate() + mondayOffset);
@@ -38,67 +25,98 @@ export async function GET(request: NextRequest) {
     const weekStartStr = weekStart.toISOString().split('T')[0];
     const weekEndStr = weekEnd.toISOString().split('T')[0];
 
-    const enriched = await Promise.all(result.rows.map(async (budget) => {
-      const categoryId = budget.category_id;
+    const result = await db.execute({
+      sql: `SELECT b.*, c.name AS category_name, c.icon AS category_icon,
+              c.color AS category_color,
+              COALESCE(SUM(CASE
+                WHEN e.type = 'expense' AND strftime('%Y-%m', e.expense_date) = b.month
+                THEN e.amount ELSE 0 END), 0) AS spent_amount,
+              COALESCE(SUM(CASE
+                WHEN e.type = 'expense' AND e.expense_date = ?
+                THEN e.amount ELSE 0 END), 0) AS today_spent,
+              COUNT(CASE
+                WHEN e.type = 'expense' AND e.expense_date = ? THEN 1 END
+              ) AS today_count,
+              COUNT(CASE
+                WHEN e.type = 'expense' AND e.expense_date >= ? AND e.expense_date <= ?
+                THEN 1 END
+              ) AS week_count,
+              COUNT(CASE
+                WHEN e.type = 'expense' AND strftime('%Y-%m', e.expense_date) = b.month
+                THEN 1 END
+              ) AS month_count
+            FROM budget_jars b
+            LEFT JOIN categories c ON c.id = b.category_id
+            LEFT JOIN expenses e ON e.user_id = b.user_id
+              AND e.category_id = b.category_id
+            WHERE b.user_id = ? AND b.month = ?
+            GROUP BY b.id, c.name, c.icon, c.color
+            ORDER BY c.name`,
+      args: [
+        today,
+        today,
+        weekStartStr,
+        weekEndStr,
+        user.id,
+        month,
+      ],
+    });
+
+    const enriched = result.rows.map((budget) => {
       const dailyLimit = Number(budget.daily_limit) || 0;
       const freqLimit = Number(budget.frequency_limit) || 0;
       const freqPeriod = (budget.frequency_period as string) || '';
-
-      let todaySpent = 0;
-      let todayCount = 0;
-      let weekCount = 0;
-      let monthCount = 0;
-
-      // Get today's spending for this category
-      if (dailyLimit > 0 || freqPeriod === 'day') {
-        const dayResult = await db.execute({
-          sql: `SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt 
-                FROM expenses WHERE user_id = ? AND category_id = ? AND type = 'expense' AND expense_date = ?`,
-          args: [user.id, categoryId, today],
-        });
-        todaySpent = Number(dayResult.rows[0]?.total) || 0;
-        todayCount = Number(dayResult.rows[0]?.cnt) || 0;
-      }
-
-      // Get this week's count
-      if (freqPeriod === 'week') {
-        const weekResult = await db.execute({
-          sql: `SELECT COUNT(*) as cnt FROM expenses 
-                WHERE user_id = ? AND category_id = ? AND type = 'expense' AND expense_date >= ? AND expense_date <= ?`,
-          args: [user.id, categoryId, weekStartStr, weekEndStr],
-        });
-        weekCount = Number(weekResult.rows[0]?.cnt) || 0;
-      }
-
-      // Get this month's count
-      if (freqPeriod === 'month') {
-        const monthResult = await db.execute({
-          sql: `SELECT COUNT(*) as cnt FROM expenses 
-                WHERE user_id = ? AND category_id = ? AND type = 'expense' AND strftime('%Y-%m', expense_date) = ?`,
-          args: [user.id, categoryId, month],
-        });
-        monthCount = Number(monthResult.rows[0]?.cnt) || 0;
-      }
+      const todaySpent = Number(budget.today_spent) || 0;
+      const todayCount = Number(budget.today_count) || 0;
+      const weekCount = Number(budget.week_count) || 0;
+      const monthCount = Number(budget.month_count) || 0;
 
       // Build alerts
-      const alerts: { type: string; message: string; severity: 'warning' | 'danger' }[] = [];
+      const alerts: { type: string; title: string; message: string; severity: 'warning' | 'danger' }[] = [];
+      const budgetAmount = Number(budget.budget_amount) || 0;
+      const spentAmount = Number(budget.spent_amount) || 0;
+      const warningPercent = Number(budget.warning_percent) || 80;
+      const percentage = budgetAmount > 0 ? (spentAmount / budgetAmount) * 100 : 0;
+      const isCurrentMonth = String(budget.month) === today.slice(0, 7);
+      const daysLeft = isCurrentMonth
+        ? Math.max(1, new Date(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0).getDate() - todayDate.getDate() + 1)
+        : 0;
 
-      // Daily limit alert
-      if (dailyLimit > 0 && todaySpent >= dailyLimit) {
+      if (percentage >= 100) {
         alerts.push({
-          type: 'daily_limit',
-          message: `Đã chi ${formatNum(todaySpent)}/${formatNum(dailyLimit)} hôm nay`,
-          severity: todaySpent >= dailyLimit ? 'danger' : 'warning',
+          type: 'monthly_budget',
+          title: 'Đã vượt ngân sách tháng',
+          message: `Vượt ${formatNum(spentAmount - budgetAmount)}. Tạm dừng chi ở hũ này hoặc tăng ngân sách.`,
+          severity: 'danger',
         });
-      } else if (dailyLimit > 0 && todaySpent >= dailyLimit * 0.8) {
+      } else if (percentage >= warningPercent) {
+        const remaining = budgetAmount - spentAmount;
         alerts.push({
-          type: 'daily_limit',
-          message: `Đã chi ${formatNum(todaySpent)}/${formatNum(dailyLimit)} hôm nay`,
+          type: 'monthly_budget',
+          title: `Đã dùng ${Math.round(percentage)}% ngân sách`,
+          message: daysLeft
+            ? `Còn ${formatNum(remaining)} · nên chi tối đa ${formatNum(remaining / daysLeft)}/ngày trong ${daysLeft} ngày tới.`
+            : `Còn ${formatNum(remaining)} trước khi chạm trần ngân sách.`,
           severity: 'warning',
         });
       }
 
-      // Frequency alert
+      if (dailyLimit > 0 && todaySpent >= dailyLimit) {
+        alerts.push({
+          type: 'daily_limit',
+          title: 'Đã vượt giới hạn hôm nay',
+          message: `Vượt ${formatNum(todaySpent - dailyLimit)}. Hãy chuyển khoản chi tiếp theo sang ngày mai nếu có thể.`,
+          severity: 'danger',
+        });
+      } else if (dailyLimit > 0 && todaySpent >= dailyLimit * 0.8) {
+        alerts.push({
+          type: 'daily_limit',
+          title: 'Sắp chạm giới hạn hôm nay',
+          message: `Còn ${formatNum(dailyLimit - todaySpent)} trong giới hạn ${formatNum(dailyLimit)}/ngày.`,
+          severity: 'warning',
+        });
+      }
+
       if (freqLimit > 0 && freqPeriod) {
         const currentCount = freqPeriod === 'day' ? todayCount : freqPeriod === 'week' ? weekCount : monthCount;
         const periodLabel = freqPeriod === 'day' ? 'hôm nay' : freqPeriod === 'week' ? 'tuần này' : 'tháng này';
@@ -106,13 +124,15 @@ export async function GET(request: NextRequest) {
         if (currentCount >= freqLimit) {
           alerts.push({
             type: 'frequency',
-            message: `Đã chi ${currentCount}/${freqLimit} lần ${periodLabel}`,
+            title: 'Đã dùng hết lượt chi',
+            message: `${currentCount}/${freqLimit} lần ${periodLabel}. Hãy cân nhắc dời giao dịch tiếp theo.`,
             severity: 'danger',
           });
         } else if (currentCount >= freqLimit - 1) {
           alerts.push({
             type: 'frequency',
-            message: `Đã chi ${currentCount}/${freqLimit} lần ${periodLabel}`,
+            title: 'Còn một lượt chi',
+            message: `Đã dùng ${currentCount}/${freqLimit} lần ${periodLabel}.`,
             severity: 'warning',
           });
         }
@@ -126,7 +146,7 @@ export async function GET(request: NextRequest) {
         month_count: monthCount,
         alerts,
       };
-    }));
+    });
 
     return NextResponse.json(enriched);
   } catch (error) {

@@ -112,6 +112,8 @@ export async function initializeDatabase(db: Client) {
       ON expenses(user_id, expense_date);
     CREATE INDEX IF NOT EXISTS idx_expenses_user_category_date
       ON expenses(user_id, category_id, expense_date);
+    CREATE INDEX IF NOT EXISTS idx_expenses_user_type_date
+      ON expenses(user_id, type, expense_date);
     CREATE INDEX IF NOT EXISTS idx_budgets_user_month
       ON budget_jars(user_id, month);
     CREATE INDEX IF NOT EXISTS idx_debts_user_status
@@ -122,16 +124,16 @@ export async function initializeDatabase(db: Client) {
 
   // Insert default categories
   const defaults = [
-    ['Ăn uống', '🍜', '#FE5A61'],
-    ['Di chuyển', '🚗', '#FFC053'],
-    ['Mua sắm', '🛍️', '#FF6FAF'],
-    ['Giải trí', '🎮', '#40C3F9'],
-    ['Hóa đơn', '📄', '#6366f1'],
-    ['Sức khỏe', '💊', '#00BC7C'],
-    ['Giáo dục', '📚', '#ec4899'],
-    ['Tiết kiệm', '💰', '#14b8a6'],
-    ['Thu nhập', '💵', '#00BC7C'],
-    ['Khác', '📦', '#64748b'],
+    ['Đào góp', 'circle-dollar-sign', '#8B5CF6'],
+    ['Nhà thuê', 'house', '#F97316'],
+    ['Ăn uống', 'utensils', '#FE5A61'],
+    ['Xe & xăng', 'fuel', '#F59E0B'],
+    ['Vợ', 'heart', '#EC4899'],
+    ['Chuyển về nhà', 'send', '#38BDF8'],
+    ['Thể thao', 'dumbbell', '#06B6D4'],
+    ['Nhậu', 'beer', '#A855F7'],
+    ['AI', 'bot', '#14B8A6'],
+    ['Thu nhập', 'banknote', '#00BC7C'],
   ];
 
   for (const [name, icon, color] of defaults) {
@@ -140,6 +142,16 @@ export async function initializeDatabase(db: Client) {
       args: [name, icon, color],
     });
   }
+
+  // Remove obsolete global defaults only when they are not referenced. Historical
+  // transactions and existing budget jars keep their original category intact.
+  await db.execute({
+    sql: `DELETE FROM categories
+          WHERE user_id IS NULL
+            AND name IN ('Di chuyển', 'Mua sắm', 'Giải trí', 'Hóa đơn', 'Sức khỏe', 'Giáo dục', 'Tiết kiệm', 'Khác')
+            AND NOT EXISTS (SELECT 1 FROM expenses WHERE expenses.category_id = categories.id)
+            AND NOT EXISTS (SELECT 1 FROM budget_jars WHERE budget_jars.category_id = categories.id)`,
+  });
 }
 
 async function hasColumn(db: Client, table: string, column: string) {

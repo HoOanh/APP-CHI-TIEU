@@ -287,10 +287,9 @@ User gõ "ăn phở 50k" ─► Frontend POST /api/chat
 Khi một model hết quota, app tự động chuyển sang model khác:
 
 ```
-Priority 1: gemini-2.5-flash        (tốt nhất)
-Priority 2: gemini-2.0-flash        (nhanh)
-Priority 3: gemini-2.0-flash-lite   (tiết kiệm)
-Priority 4: gemini-1.5-flash        (dự phòng)
+Priority 1: gemini-3.5-flash-lite   (nhanh và tối ưu chi phí)
+Priority 2: gemini-3.6-flash        (độ chính xác cao hơn)
+Priority 3: gemini-2.5-flash        (fallback ổn định)
 ```
 
 ### Database Schema

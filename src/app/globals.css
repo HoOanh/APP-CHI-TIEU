@@ -57,7 +57,7 @@
 
 /* ===== SPENDEE LIGHT THEME ===== */
 :root {
-    --app-font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --app-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Arial, sans-serif;
     --background: #F7F9FB;
     --foreground: #2D3748;
     --card: #FFFFFF;
@@ -93,10 +93,6 @@
 }
 
 @media (min-width: 768px) {
-  .app-content > .max-w-lg {
-    max-width: none;
-  }
-
   .app-content .pb-nav {
     padding-bottom: 2.5rem;
   }
@@ -110,6 +106,7 @@
     @apply bg-background text-foreground antialiased;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior: none;
+    overflow-x: hidden;
   }
   html {
     @apply font-sans scroll-smooth;
@@ -124,7 +121,7 @@
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .pb-nav {
-    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(5.25rem + env(safe-area-inset-bottom, 0px));
   }
   .no-scrollbar::-webkit-scrollbar {
     display: none;

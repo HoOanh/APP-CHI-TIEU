@@ -46,15 +46,29 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     
     const db = await getDb();
-    const countResult = await db.execute({
+    const categoryResult = await db.execute({
+      sql: 'SELECT id FROM categories WHERE id = ? AND user_id = ?',
+      args: [id, user.id],
+    });
+    if (!categoryResult.rows[0]) {
+      return NextResponse.json({ error: 'Không thể xóa danh mục mặc định hoặc không tồn tại' }, { status: 404 });
+    }
+
+    const expenseCountResult = await db.execute({
       sql: 'SELECT COUNT(*) as count FROM expenses WHERE category_id = ? AND user_id = ?',
       args: [id, user.id]
     });
-    
-    const count = countResult.rows[0].count as number;
-    
-    if (count > 0) {
-      return NextResponse.json({ error: 'Cannot delete category with existing expenses' }, { status: 400 });
+
+    const budgetCountResult = await db.execute({
+      sql: 'SELECT COUNT(*) as count FROM budget_jars WHERE category_id = ? AND user_id = ?',
+      args: [id, user.id]
+    });
+
+    const expenseCount = Number(expenseCountResult.rows[0]?.count ?? 0);
+    const budgetCount = Number(budgetCountResult.rows[0]?.count ?? 0);
+
+    if (expenseCount > 0 || budgetCount > 0) {
+      return NextResponse.json({ error: 'Cannot delete category with existing expenses or budgets' }, { status: 400 });
     }
     
     await db.execute({

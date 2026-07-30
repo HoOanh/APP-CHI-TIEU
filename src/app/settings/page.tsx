@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { signOut } from 'next-auth/react';
+import dynamic from 'next/dynamic';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -11,17 +13,30 @@ import {
   EyeOff,
   LayoutList,
   Plus,
+  ReceiptText,
   Save,
   Server,
+  TrendingDown,
   Trash2,
+  UserRound,
+  WalletCards,
   X,
 } from 'lucide-react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { MonthPicker } from '@/components/MonthPicker';
 import { useToast } from '@/hooks/useToast';
+import { formatCurrency, getCurrentMonth, getPercentage } from '@/lib/utils';
+import { CategoryIcon } from '@/components/CategoryIcon';
+
+const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
+
+const CATEGORY_COLORS = ['#00B878', '#40C3F9', '#FFB020', '#F65B8D', '#8B5CF6', '#64748B'];
 
 interface Category {
   id: string;
@@ -38,6 +53,26 @@ interface SettingsResponse {
   };
 }
 
+interface ProfileResponse {
+  name: string;
+  email: string;
+  image: string;
+  isDevelopmentUser: boolean;
+}
+
+interface SpendingSummary {
+  total: number;
+  count: number;
+  daily_average: number;
+  by_category: Array<{ category_name: string; category_color: string; total: number }>;
+  by_date: Array<{ date: string; total: number }>;
+}
+type StatsPeriod = 'daily' | 'monthly' | 'quarterly' | 'yearly';
+
+function getInitials(name: string) {
+  return name.split(' ').filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase();
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const { showToast } = useToast();
@@ -49,23 +84,30 @@ export default function SettingsPage() {
   });
   const [categories, setCategories] = useState<Category[]>([]);
   const [stats, setStats] = useState({ expenses: 0, debts: 0 });
+  const [profile, setProfile] = useState<ProfileResponse | null>(null);
+  const [spendingSummary, setSpendingSummary] = useState<SpendingSummary | null>(null);
+  const [period, setPeriod] = useState<StatsPeriod>('daily');
+  const [month, setMonth] = useState(getCurrentMonth());
+  const [year, setYear] = useState(String(new Date().getFullYear()));
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState({
     name: '',
-    icon: '📦',
+    icon: 'category',
     color: '#40C3F9',
   });
 
   useEffect(() => {
     async function loadSettings() {
       try {
-        const [categoryResponse, statsResponse, settingsResponse] =
+        const [categoryResponse, statsResponse, settingsResponse, profileResponse, summaryResponse] =
           await Promise.all([
             fetch('/api/categories'),
             fetch('/api/settings/stats'),
             fetch('/api/settings'),
+            fetch('/api/profile'),
+            fetch(`/api/expenses/stats?period=${period}&month=${month}&year=${year}`),
           ]);
 
         if (categoryResponse.ok) {
@@ -78,6 +120,8 @@ export default function SettingsPage() {
           const data = (await settingsResponse.json()) as SettingsResponse;
           setGemini(data.gemini);
         }
+        if (profileResponse?.ok) setProfile(await profileResponse.json() as ProfileResponse);
+        if (summaryResponse?.ok) setSpendingSummary(await summaryResponse.json() as SpendingSummary);
       } catch {
         showToast('Không thể tải cài đặt', 'error');
       } finally {
@@ -86,7 +130,7 @@ export default function SettingsPage() {
     }
 
     void loadSettings();
-  }, [showToast]);
+  }, [showToast, period, month, year]);
 
   async function saveApiKey() {
     if (apiKey.trim().length < 10) {
@@ -130,7 +174,7 @@ export default function SettingsPage() {
           a.name.localeCompare(b.name, 'vi'),
         ),
       );
-      setNewCategory({ name: '', icon: '📦', color: '#40C3F9' });
+      setNewCategory({ name: '', icon: 'category', color: '#40C3F9' });
       setIsAddingCategory(false);
       showToast('Đã thêm danh mục', 'success');
     } catch {
@@ -194,6 +238,49 @@ export default function SettingsPage() {
           </p>
         </div>
       </header>
+
+      <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-sm">
+        <div className="flex items-center gap-3 p-5">
+          <Avatar size="lg" className="size-14">
+            {profile?.image ? <AvatarImage src={profile.image} alt={profile.name} /> : null}
+            <AvatarFallback className="bg-emerald-50 text-base font-semibold text-primary">
+              {getInitials(profile?.name || 'Người dùng') || <UserRound className="size-5" />}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-base font-semibold text-slate-800">{profile?.name || 'Đang tải tài khoản...'}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{profile?.email || '—'}</p>
+          </div>
+          {!profile?.isDevelopmentUser && (
+            <Button variant="outline" size="sm" className="rounded-xl text-destructive hover:bg-rose-50 hover:text-destructive" onClick={() => signOut({ callbackUrl: '/login' })}>
+              Đăng xuất
+            </Button>
+          )}
+        </div>
+        <div id="thong-ke" className="grid grid-cols-3 divide-x border-t border-slate-100 bg-slate-50/70">
+          <ProfileMetric label="Chi tháng này" value={spendingSummary ? formatCurrency(spendingSummary.total) : '—'} tone="rose" />
+          <ProfileMetric label="Giao dịch" value={spendingSummary ? String(spendingSummary.count) : '—'} tone="slate" />
+          <ProfileMetric label="TB mỗi ngày" value={spendingSummary ? formatCurrency(spendingSummary.daily_average) : '—'} tone="emerald" />
+        </div>
+      </section>
+
+      <section className="space-y-5">
+        <div className="flex items-center justify-between gap-3">
+          <div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h2 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h2></div>
+          {period === 'daily' ? <MonthPicker month={month} onChange={setMonth} /> : <div className="flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700"><button type="button" className="px-2" onClick={() => setYear(String(Number(year) - 1))}>‹</button><span className="min-w-12 text-center">{period === 'yearly' ? '5 năm' : year}</span><button type="button" className="px-2" onClick={() => setYear(String(Number(year) + 1))}>›</button></div>}
+        </div>
+        <Tabs value={period} onValueChange={(value) => setPeriod(value as StatsPeriod)}><TabsList className="grid w-full grid-cols-4 rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
+        <section className="overflow-hidden rounded-[22px] bg-[#344554] p-5 text-white shadow-[0_18px_36px_-25px_rgba(39,55,73,0.8)]">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">Tổng chi tiêu</p>
+          <p className="mt-2 text-[31px] font-semibold leading-none tracking-[-0.055em] tabular-nums">{formatCurrency(spendingSummary?.total || 0)}</p>
+          <div className="mt-4 flex items-center justify-between border-t border-white/15 pt-3 text-xs"><span className="flex items-center gap-1.5 text-white/65"><TrendingDown className="size-3.5 text-rose-300" />{period === 'daily' ? month : period === 'monthly' ? year : period === 'quarterly' ? `Quý theo năm ${year}` : '5 năm gần đây'}</span><span className="font-medium text-white/80">{spendingSummary?.count || 0} giao dịch</span></div>
+        </section>
+        <section className="grid grid-cols-2 divide-x divide-slate-200 rounded-2xl border border-slate-200 bg-white py-3"><ProfileStat icon={ReceiptText} label="Trung bình" value={formatCurrency(spendingSummary?.daily_average || 0)} suffix={period === 'daily' ? '/ ngày' : '/ kỳ'} /><ProfileStat icon={WalletCards} label="Danh mục nhiều nhất" value={spendingSummary?.by_category[0]?.category_name || 'Chưa có'} suffix={spendingSummary?.by_category[0] ? formatCurrency(spendingSummary.by_category[0].total) : ''} /></section>
+        {spendingSummary && spendingSummary.total > 0 ? <>
+          <StatsCharts byDate={spendingSummary.by_date} period={period} total={spendingSummary.total} />
+          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-[15px] font-semibold text-slate-800">Cơ cấu chi tiêu</h2><p className="mt-0.5 text-xs text-slate-400">Danh mục theo tỷ trọng trong kỳ đã chọn</p></div><div className="divide-y divide-slate-100">{spendingSummary.by_category.map((item) => <ProfileCategoryRow key={item.category_name} item={item} total={spendingSummary.total} />)}</div></section>
+        </> : <p className="rounded-2xl border border-slate-200 bg-white py-10 text-center text-sm text-slate-400">Chưa có khoản chi trong tháng này.</p>}
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card className="rounded-3xl border-border bg-white shadow-sm">
@@ -278,7 +365,7 @@ export default function SettingsPage() {
                 <LayoutList className="size-4 text-rose-500" /> Danh mục
               </CardTitle>
               <CardDescription className="mt-1 text-xs">
-                Danh mục mặc định và danh mục riêng của bạn
+                Một danh sách dùng chung cho giao dịch và hũ chi tiêu
               </CardDescription>
             </div>
             <Button
@@ -296,37 +383,34 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="p-0">
             {isAddingCategory && (
-              <div className="mx-5 mt-3 grid grid-cols-[48px_1fr_48px] gap-2 rounded-2xl bg-slate-50 p-3">
-                <Input
-                  value={newCategory.icon}
-                  onChange={(event) =>
-                    setNewCategory((current) => ({
-                      ...current,
-                      icon: event.target.value,
-                    }))
-                  }
-                  aria-label="Biểu tượng"
-                  className="h-10 rounded-xl px-2 text-center"
-                />
-                <Input
-                  value={newCategory.name}
-                  onChange={(event) =>
-                    setNewCategory((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder="Tên danh mục"
-                  className="h-10 rounded-xl"
-                />
-                <Button
-                  size="icon"
-                  onClick={addCategory}
-                  disabled={!newCategory.name.trim()}
-                  className="size-10 rounded-xl"
-                >
-                  <Plus className="size-4" />
-                </Button>
+              <div className="mx-5 mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex gap-2">
+                  <CategoryIcon name={newCategory.name || 'Danh mục'} color={newCategory.color} className="size-10 rounded-xl" iconClassName="size-4" />
+                  <Input
+                    value={newCategory.name}
+                    onChange={(event) => setNewCategory((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="Tên danh mục"
+                    className="h-10 rounded-xl"
+                  />
+                  <Button size="icon" onClick={addCategory} disabled={!newCategory.name.trim()} className="size-10 shrink-0 rounded-xl">
+                    <Plus className="size-4" />
+                  </Button>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-medium text-muted-foreground">Màu hiển thị</span>
+                  <div className="flex gap-2">
+                    {CATEGORY_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        aria-label={`Chọn màu ${color}`}
+                        onClick={() => setNewCategory((current) => ({ ...current, color }))}
+                        className={`size-5 rounded-full ring-offset-2 transition ${newCategory.color === color ? 'ring-2 ring-slate-500' : ''}`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
             <ScrollArea className="h-[260px]">
@@ -342,12 +426,7 @@ export default function SettingsPage() {
                       className="group flex min-h-14 items-center justify-between py-2"
                     >
                       <div className="flex items-center gap-3">
-                        <div
-                          className="flex size-9 items-center justify-center rounded-full text-lg"
-                          style={{ backgroundColor: `${category.color}18` }}
-                        >
-                          {category.icon}
-                        </div>
+                        <CategoryIcon name={category.name} color={category.color} className="size-9 rounded-xl" iconClassName="size-4" />
                         <div>
                           <span className="block text-sm font-medium">
                             {category.name}
@@ -408,4 +487,18 @@ export default function SettingsPage() {
       </div>
     </div>
   );
+}
+
+function ProfileMetric({ label, value, tone }: { label: string; value: string; tone: 'rose' | 'slate' | 'emerald' }) {
+  const color = tone === 'rose' ? 'text-rose-500' : tone === 'emerald' ? 'text-emerald-600' : 'text-slate-700';
+  return <div className="min-w-0 px-3 py-3 text-center"><p className="truncate text-[10px] text-muted-foreground">{label}</p><p className={`mt-1 truncate text-sm font-semibold tabular-nums ${color}`}>{value}</p></div>;
+}
+
+function ProfileStat({ icon: Icon, label, value, suffix }: { icon: typeof ReceiptText; label: string; value: string; suffix: string }) {
+  return <div className="min-w-0 px-3.5"><p className="flex items-center gap-1.5 text-[11px] text-slate-400"><Icon className="size-3.5 text-[#00a970]" />{label}</p><p className="mt-1 truncate text-[15px] font-semibold text-slate-700">{value}</p><p className="mt-0.5 truncate text-[11px] text-slate-400">{suffix}</p></div>;
+}
+
+function ProfileCategoryRow({ item, total }: { item: SpendingSummary['by_category'][number]; total: number }) {
+  const percentage = getPercentage(item.total, total);
+  return <div className="px-4 py-3.5"><div className="flex items-center gap-3"><CategoryIcon name={item.category_name} color={item.category_color} className="size-9 rounded-xl" iconClassName="size-4" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-700">{item.category_name}</p><p className="mt-0.5 text-[11px] text-slate-400">{Math.round(percentage)}%</p></div><p className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(item.total)}</p></div><div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[#00bc7c]" style={{ width: `${percentage}%` }} /></div></div>;
 }

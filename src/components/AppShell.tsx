@@ -1,11 +1,11 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import {
-  BarChart3,
-  Bot,
+  CirclePlus,
   ChevronDown,
   HandCoins,
   Home,
@@ -17,7 +17,8 @@ import {
 } from 'lucide-react';
 import { BottomNav } from '@/components/BottomNav';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { cn } from '@/lib/utils';
+import { useToast } from '@/hooks/useToast';
+import { cn, formatCurrency, getCurrentMonth } from '@/lib/utils';
 
 interface AppShellUser {
   name: string;
@@ -31,11 +32,17 @@ interface AppShellProps {
   user: AppShellUser | null;
 }
 
+interface BudgetAlertResponse {
+  id: string;
+  budget_amount: number;
+  category_name: string;
+  spent_amount: number;
+}
+
 const desktopNavigation = [
   { href: '/', icon: Home, label: 'Tổng quan' },
   { href: '/expenses', icon: Receipt, label: 'Giao dịch' },
   { href: '/budgets', icon: PiggyBank, label: 'Ngân sách' },
-  { href: '/stats', icon: BarChart3, label: 'Phân tích' },
   { href: '/debts', icon: HandCoins, label: 'Công nợ' },
 ];
 
@@ -51,8 +58,34 @@ function getInitials(name: string) {
 
 export function AppShell({ children, user }: AppShellProps) {
   const pathname = usePathname();
+  const hasCheckedBudgetAlerts = useRef(false);
+  const { showToast } = useToast();
   const isPublicRoute = pathname.startsWith('/login');
   const isChatRoute = pathname === '/chat' || pathname === '/debt-chat';
+
+  useEffect(() => {
+    if (!user || isPublicRoute || hasCheckedBudgetAlerts.current) return;
+    hasCheckedBudgetAlerts.current = true;
+
+    const notifyBudgetStatus = async () => {
+      const response = await fetch(`/api/dashboard/budget-alerts?month=${getCurrentMonth()}`);
+      if (!response.ok) return;
+      const alerts: BudgetAlertResponse[] = await response.json();
+      alerts
+        .filter((alert) => Number(alert.spent_amount) >= Number(alert.budget_amount))
+        .forEach((alert) => {
+          const spent = Number(alert.spent_amount);
+          const limit = Number(alert.budget_amount);
+          showToast(
+            `Chi hố vãi — ${alert.category_name} đã thủng ngân sách`,
+            'error',
+            `Đã chi ${formatCurrency(spent)}/${formatCurrency(limit)}, thủng ${formatCurrency(spent - limit)}. Khoản đã chi không cứu được; giờ bớt vung tay với các khoản sau.`,
+          );
+        });
+    };
+
+    void notifyBudgetStatus();
+  }, [isPublicRoute, showToast, user]);
 
   if (isPublicRoute) {
     return <main className="min-h-dvh">{children}</main>;
@@ -105,8 +138,8 @@ export function AppShell({ children, user }: AppShellProps) {
             href="/chat"
             className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-white shadow-lg shadow-emerald-200 transition hover:bg-[#00a86f]"
           >
-            <Bot className="size-5" />
-            Ghi giao dịch bằng AI
+            <CirclePlus className="size-5" />
+            Ghi giao dịch nhanh
           </Link>
         </div>
 
@@ -140,7 +173,7 @@ export function AppShell({ children, user }: AppShellProps) {
         </main>
       </div>
 
-      <BottomNav />
+      <BottomNav user={user} />
     </div>
   );
 }
