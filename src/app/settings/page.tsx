@@ -6,16 +6,11 @@ import { signOut } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import {
   ArrowLeft,
-  CheckCircle2,
   Database,
   Download,
-  Eye,
-  EyeOff,
   LayoutList,
   Plus,
   ReceiptText,
-  Save,
-  Server,
   TrendingDown,
   Trash2,
   UserRound,
@@ -33,6 +28,7 @@ import { MonthPicker } from '@/components/MonthPicker';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, getCurrentMonth, getPercentage } from '@/lib/utils';
 import { CategoryIcon } from '@/components/CategoryIcon';
+import { AiProvidersSettings } from '@/components/AiProvidersSettings';
 
 const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
 
@@ -44,13 +40,6 @@ interface Category {
   icon: string;
   color: string;
   is_system: number;
-}
-
-interface SettingsResponse {
-  gemini: {
-    configured: boolean;
-    source: 'account' | 'server' | 'none';
-  };
 }
 
 interface ProfileResponse {
@@ -76,12 +65,6 @@ function getInitials(name: string) {
 export default function SettingsPage() {
   const router = useRouter();
   const { showToast } = useToast();
-  const [apiKey, setApiKey] = useState('');
-  const [showKey, setShowKey] = useState(false);
-  const [gemini, setGemini] = useState<SettingsResponse['gemini']>({
-    configured: false,
-    source: 'none',
-  });
   const [categories, setCategories] = useState<Category[]>([]);
   const [stats, setStats] = useState({ expenses: 0, debts: 0 });
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
@@ -90,7 +73,6 @@ export default function SettingsPage() {
   const [month, setMonth] = useState(getCurrentMonth());
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState({
     name: '',
@@ -101,11 +83,10 @@ export default function SettingsPage() {
   useEffect(() => {
     async function loadSettings() {
       try {
-        const [categoryResponse, statsResponse, settingsResponse, profileResponse, summaryResponse] =
+        const [categoryResponse, statsResponse, profileResponse, summaryResponse] =
           await Promise.all([
             fetch('/api/categories'),
             fetch('/api/settings/stats'),
-            fetch('/api/settings'),
             fetch('/api/profile'),
             fetch(`/api/expenses/stats?period=${period}&month=${month}&year=${year}`),
           ]);
@@ -115,10 +96,6 @@ export default function SettingsPage() {
         }
         if (statsResponse.ok) {
           setStats(await statsResponse.json());
-        }
-        if (settingsResponse.ok) {
-          const data = (await settingsResponse.json()) as SettingsResponse;
-          setGemini(data.gemini);
         }
         if (profileResponse?.ok) setProfile(await profileResponse.json() as ProfileResponse);
         if (summaryResponse?.ok) setSpendingSummary(await summaryResponse.json() as SpendingSummary);
@@ -131,31 +108,6 @@ export default function SettingsPage() {
 
     void loadSettings();
   }, [showToast, period, month, year]);
-
-  async function saveApiKey() {
-    if (apiKey.trim().length < 10) {
-      showToast('API key không hợp lệ', 'error');
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: 'gemini_api_key', value: apiKey }),
-      });
-      if (!response.ok) throw new Error('Save failed');
-
-      setApiKey('');
-      setGemini({ configured: true, source: 'account' });
-      showToast('Đã mã hóa và lưu API key', 'success');
-    } catch {
-      showToast('Không thể lưu API key', 'error');
-    } finally {
-      setIsSaving(false);
-    }
-  }
 
   async function addCategory() {
     if (!newCategory.name.trim()) return;
@@ -282,81 +234,9 @@ export default function SettingsPage() {
         </> : <p className="rounded-2xl border border-slate-200 bg-white py-10 text-center text-sm text-slate-400">Chưa có khoản chi trong tháng này.</p>}
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="rounded-3xl border-border bg-white shadow-sm">
-          <CardHeader className="p-5 pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-              <Server className="size-4 text-primary" /> Kết nối AI
-            </CardTitle>
-            <CardDescription className="text-xs">
-              API key được mã hóa trước khi lưu và không bao giờ trả lại client.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 p-5 pt-3">
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">
-                Google Gemini API Key
-              </Label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Input
-                    type={showKey ? 'text' : 'password'}
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                    placeholder={
-                      gemini.configured ? 'Nhập key mới để thay thế' : 'AIzaSy...'
-                    }
-                    className="h-11 rounded-xl bg-background pr-10"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1 size-9 text-muted-foreground"
-                    onClick={() => setShowKey((current) => !current)}
-                  >
-                    {showKey ? (
-                      <EyeOff className="size-4" />
-                    ) : (
-                      <Eye className="size-4" />
-                    )}
-                  </Button>
-                </div>
-                <Button
-                  onClick={saveApiKey}
-                  disabled={isSaving || apiKey.trim().length < 10}
-                  className="size-11 rounded-xl bg-primary p-0 text-white hover:bg-[#00a86f]"
-                >
-                  <Save className="size-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              <CheckCircle2
-                className={
-                  gemini.configured
-                    ? 'size-4 text-primary'
-                    : 'size-4 text-muted-foreground'
-                }
-              />
-              <span
-                className={
-                  gemini.configured
-                    ? 'font-medium text-emerald-700'
-                    : 'text-muted-foreground'
-                }
-              >
-                {gemini.configured
-                  ? `Sẵn sàng · ${
-                      gemini.source === 'account'
-                        ? 'key của tài khoản'
-                        : 'key máy chủ'
-                    }`
-                  : 'Chưa cấu hình'}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
+      <AiProvidersSettings />
+
+      <div className="grid gap-6">
 
         <Card className="rounded-3xl border-border bg-white shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between p-5 pb-2">
@@ -456,7 +336,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl border-border bg-white shadow-sm lg:col-span-2">
+        <Card className="rounded-3xl border-border bg-white shadow-sm">
           <CardHeader className="p-5 pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
               <Database className="size-4 text-blue-500" /> Dữ liệu & lưu trữ

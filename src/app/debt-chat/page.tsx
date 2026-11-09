@@ -110,7 +110,7 @@ export default function DebtChatPage() {
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-background max-w-lg mx-auto overflow-hidden">
+    <div className="mx-auto flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden bg-background">
       {/* Header */}
       <header className="flex items-center gap-3 p-4 border-b border-gray-200 bg-white/90 backdrop-blur-xl z-10 shrink-0">
         <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full h-10 w-10">
@@ -124,7 +124,7 @@ export default function DebtChatPage() {
       </header>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="mx-auto w-full max-w-4xl flex-1 space-y-4 overflow-y-auto p-4">
         {messages.map((msg) => (
           <div key={msg.id} className={cn("flex w-full", msg.role === "user" ? "justify-end" : "justify-start")}>
             <div className={cn(
@@ -167,7 +167,8 @@ export default function DebtChatPage() {
       </div>
 
       {/* Input Area */}
-      <div className="p-4 bg-white border-t border-gray-200 shrink-0 mb-safe">
+      <div className="shrink-0 border-t border-gray-200 bg-white p-4 mb-safe">
+        <div className="mx-auto w-full max-w-4xl">
         <form onSubmit={handleSubmit} className="flex items-end gap-2 relative">
           <input 
             type="file" 
@@ -204,6 +205,7 @@ export default function DebtChatPage() {
             {isSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
           </Button>
         </form>
+        </div>
       </div>
     </div>
   );

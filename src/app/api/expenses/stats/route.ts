@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+import { getCurrentMonth, getVietnamToday } from '@/lib/utils';
 
 type Period = 'daily' | 'monthly' | 'quarterly' | 'yearly';
 
@@ -21,7 +22,7 @@ function getRange(period: Period, month: string, year: string): Range {
   if (period === 'daily') return monthRange(month);
   const selectedYear = Number(year);
   if (period === 'yearly') {
-    const currentYear = new Date().getFullYear();
+    const currentYear = Number(getVietnamToday().slice(0, 4));
     return { start: `${currentYear - 4}-01-01`, end: `${currentYear + 1}-01-01` };
   }
   return {
@@ -46,8 +47,8 @@ export async function GET(request: NextRequest) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     const period = (request.nextUrl.searchParams.get('period') || 'daily') as Period;
-    const month = request.nextUrl.searchParams.get('month') || new Date().toISOString().slice(0, 7);
-    const year = request.nextUrl.searchParams.get('year') || new Date().getFullYear().toString();
+    const month = request.nextUrl.searchParams.get('month') || getCurrentMonth();
+    const year = request.nextUrl.searchParams.get('year') || getVietnamToday().slice(0, 4);
     const range = getRange(period, month, year);
     const db = await getDb();
     const baseArgs = [user.id, range.start, range.end];

@@ -8,6 +8,7 @@ import {
   type PendingTransactionForCorrection,
 } from '@/lib/gemini';
 import { getCurrentUser } from '@/lib/current-user';
+import { getVietnamToday } from '@/lib/utils';
 
 export async function POST(request: NextRequest) {
   try {
@@ -190,7 +191,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Debt not found' }, { status: 404 });
       }
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = getVietnamToday();
       
       await db.execute({
         sql: 'INSERT INTO debt_payments (user_id, debt_id, amount, payment_date, note) VALUES (?, ?, ?, ?, ?)',

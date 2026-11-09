@@ -13,7 +13,13 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/useToast";
-import { formatCurrency, formatDate, getPercentage, cn } from "@/lib/utils";
+import { formatCurrency, formatDate, getCurrentMonth, getPercentage, getVietnamToday, cn } from "@/lib/utils";
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+
+const paymentSchema = z.object({ amount: z.string().refine((value) => Number(value) > 0, 'Nhập số tiền lớn hơn 0'), note: z.string().max(500) });
+const jarSchema = z.object({ target_amount: z.string().refine((value) => Number(value) > 0, 'Mục tiêu phải lớn hơn 0'), month: z.string().regex(/^\d{4}-\d{2}$/, 'Chọn tháng hợp lệ') });
 
 type Debt = {
   id: string;
@@ -56,8 +62,10 @@ export default function DebtDetailPage() {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isJarOpen, setIsJarOpen] = useState(false);
   
-  const [newPayment, setNewPayment] = useState({ amount: "", note: "" });
-  const [newJar, setNewJar] = useState({ target_amount: "", month: new Date().toISOString().slice(0, 7) });
+  const paymentForm = useForm<z.infer<typeof paymentSchema>>({ resolver: zodResolver(paymentSchema), defaultValues: { amount: '', note: '' } });
+  const jarForm = useForm<z.infer<typeof jarSchema>>({ resolver: zodResolver(jarSchema), defaultValues: { target_amount: '', month: getCurrentMonth() } });
+  const newPayment = paymentForm.watch();
+  const newJar = jarForm.watch();
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -85,18 +93,17 @@ export default function DebtDetailPage() {
     fetchData();
   }, [fetchData]);
 
-  const handleAddPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddPayment = async (values: z.infer<typeof paymentSchema>) => {
     try {
       const res = await fetch(`/api/debts/${id}/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: Number(newPayment.amount), note: newPayment.note }),
+        body: JSON.stringify({ amount: Number(values.amount), note: values.note }),
       });
       if (res.ok) {
         showToast("Đã ghi nhận thanh toán");
         setIsPaymentOpen(false);
-        setNewPayment({ amount: "", note: "" });
+        paymentForm.reset({ amount: '', note: '' });
         fetchData();
       }
     } catch {
@@ -104,18 +111,17 @@ export default function DebtDetailPage() {
     }
   };
 
-  const handleAddJar = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddJar = async (values: z.infer<typeof jarSchema>) => {
     try {
       const res = await fetch(`/api/debts/jars`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ debt_id: id, ...newJar, target_amount: Number(newJar.target_amount) }),
+        body: JSON.stringify({ debt_id: id, ...values, target_amount: Number(values.target_amount) }),
       });
       if (res.ok) {
         showToast("Đã cập nhật hũ tiết kiệm trả nợ");
         setIsJarOpen(false);
-        setNewJar({ ...newJar, target_amount: "" });
+        jarForm.reset({ ...values, target_amount: '' });
         fetchData();
       }
     } catch {
@@ -140,7 +146,7 @@ export default function DebtDetailPage() {
   const strokeDashoffset = circumference - (progress / 100) * circumference;
 
   return (
-    <div className="pb-nav min-h-screen bg-background max-w-lg mx-auto p-4 space-y-6">
+    <div className="pb-nav mx-auto min-h-screen w-full max-w-6xl space-y-6 bg-background p-4 md:p-8">
       <header className="flex items-center gap-3 pt-2">
         <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full h-10 w-10">
           <ArrowLeft className="h-5 w-5" />
@@ -151,6 +157,7 @@ export default function DebtDetailPage() {
         </div>
       </header>
 
+      <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
       {/* Main Progress Overview */}
       <Card className="rounded-2xl border-border bg-white shadow-sm overflow-hidden relative">
         <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-emerald-500/10 to-transparent pointer-events-none" />
@@ -196,23 +203,24 @@ export default function DebtDetailPage() {
       {/* Quick Actions */}
       <div className="grid grid-cols-2 gap-3">
         <Dialog open={isPaymentOpen} onOpenChange={setIsPaymentOpen}>
-          <DialogTrigger render={
+          <DialogTrigger asChild>
             <Button className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm flex items-center gap-2">
               <Plus className="h-4 w-4" /> Trả nợ
             </Button>
-          } />
+          </DialogTrigger>
           <DialogContent className="rounded-2xl max-w-sm">
             <DialogHeader>
               <DialogTitle>Ghi nhận trả nợ</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleAddPayment} className="space-y-4 mt-2">
+            <form onSubmit={paymentForm.handleSubmit(handleAddPayment)} noValidate className="space-y-4 mt-2">
               <div className="space-y-2">
                 <Label>Số tiền</Label>
-                <Input type="number" required className="rounded-xl" value={newPayment.amount} onChange={(e) => setNewPayment({ ...newPayment, amount: e.target.value })} />
+                <Input type="number" min="1" className="rounded-xl" value={newPayment.amount} aria-invalid={Boolean(paymentForm.formState.errors.amount)} onChange={(event) => paymentForm.setValue('amount', event.target.value, { shouldValidate: true })} />
+                {paymentForm.formState.errors.amount?.message ? <p role="alert" className="text-xs text-red-600">{paymentForm.formState.errors.amount.message}</p> : null}
               </div>
               <div className="space-y-2">
                 <Label>Ghi chú</Label>
-                <Input className="rounded-xl" value={newPayment.note} onChange={(e) => setNewPayment({ ...newPayment, note: e.target.value })} />
+                <Input className="rounded-xl" value={newPayment.note} onChange={(event) => paymentForm.setValue('note', event.target.value, { shouldValidate: true })} />
               </div>
               <Button type="submit" className="w-full rounded-xl">Lưu</Button>
             </form>
@@ -244,7 +252,7 @@ export default function DebtDetailPage() {
             <Separator className="col-span-2" />
             <div>
               <p className="text-xs text-muted-foreground">Ngày bắt đầu</p>
-              <p className="font-medium text-sm">{formatDate(debt.start_date || new Date().toISOString())}</p>
+              <p className="font-medium text-sm">{formatDate(debt.start_date || getVietnamToday())}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Hạn trả</p>
@@ -261,19 +269,20 @@ export default function DebtDetailPage() {
             <PiggyBank className="h-4 w-4 text-rose-500" /> Hũ tiết kiệm trả nợ
           </CardTitle>
           <Dialog open={isJarOpen} onOpenChange={setIsJarOpen}>
-            <DialogTrigger render={
+            <DialogTrigger asChild>
               <Button variant="ghost" size="sm" className="h-8 rounded-lg text-xs">Cập nhật</Button>
-            } />
+            </DialogTrigger>
             <DialogContent className="rounded-2xl max-w-sm">
               <DialogHeader><DialogTitle>Cập nhật hũ tháng {newJar.month}</DialogTitle></DialogHeader>
-              <form onSubmit={handleAddJar} className="space-y-4 mt-2">
+              <form onSubmit={jarForm.handleSubmit(handleAddJar)} noValidate className="space-y-4 mt-2">
                 <div className="space-y-2">
                   <Label>Tháng</Label>
-                  <Input type="month" required className="rounded-xl" value={newJar.month} onChange={(e) => setNewJar({ ...newJar, month: e.target.value })} />
+                  <Input type="month" className="rounded-xl" value={newJar.month} onChange={(event) => jarForm.setValue('month', event.target.value, { shouldValidate: true })} />
                 </div>
                 <div className="space-y-2">
                   <Label>Mục tiêu để dành</Label>
-                  <Input type="number" required className="rounded-xl" value={newJar.target_amount} onChange={(e) => setNewJar({ ...newJar, target_amount: e.target.value })} />
+                  <Input type="number" min="1" className="rounded-xl" value={newJar.target_amount} aria-invalid={Boolean(jarForm.formState.errors.target_amount)} onChange={(event) => jarForm.setValue('target_amount', event.target.value, { shouldValidate: true })} />
+                  {jarForm.formState.errors.target_amount?.message ? <p role="alert" className="text-xs text-red-600">{jarForm.formState.errors.target_amount.message}</p> : null}
                 </div>
                 <Button type="submit" className="w-full rounded-xl">Lưu</Button>
               </form>
@@ -338,6 +347,7 @@ export default function DebtDetailPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

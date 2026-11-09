@@ -41,9 +41,15 @@ import {
 import { MonthPicker } from '@/components/MonthPicker';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { useToast } from '@/hooks/useToast';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import * as CollapsiblePrimitive from 'radix-ui/collapsible';
 import {
   formatCurrency,
+  formatMoneyInput,
   getCurrentMonth,
+  parseMoneyInput,
   getPercentage,
   cn,
 } from '@/lib/utils';
@@ -79,6 +85,7 @@ interface BudgetAlert {
 
 interface Budget {
   id: string;
+  month: string;
   category_id: string;
   category_name: string;
   category_icon: string;
@@ -93,8 +100,31 @@ interface Budget {
   today_count: number;
   week_count: number;
   month_count: number;
+  budget_basis: 'monthly' | 'daily';
+  daily_amount: number;
+  budget_days: number;
   alerts: BudgetAlert[];
 }
+
+const budgetFormSchema = z.object({
+  category_id: z.string().min(1, 'Chọn danh mục'),
+  budget_amount: z.string(),
+  budget_basis: z.enum(['monthly', 'daily']),
+  daily_amount: z.string(),
+  budget_days: z.string(),
+  warning_percent: z.string(),
+  daily_limit: z.string(),
+  frequency_limit: z.string(),
+  frequency_period: z.string(),
+}).superRefine((value, context) => {
+  if (value.budget_basis === 'monthly' && parseMoneyInput(value.budget_amount) <= 0) context.addIssue({ code: 'custom', path: ['budget_amount'], message: 'Nhập ngân sách lớn hơn 0' });
+  if (value.budget_basis === 'daily') {
+    if (parseMoneyInput(value.daily_amount) <= 0) context.addIssue({ code: 'custom', path: ['daily_amount'], message: 'Nhập mức chi mỗi ngày lớn hơn 0' });
+    const days = Number(value.budget_days);
+    if (!Number.isInteger(days) || days < 1 || days > 31) context.addIssue({ code: 'custom', path: ['budget_days'], message: 'Số ngày phải từ 1 đến 31' });
+  }
+});
+type BudgetFormValues = z.infer<typeof budgetFormSchema>;
 
 export default function BudgetsPage() {
   const [month, setMonth] = useState(getCurrentMonth());
@@ -110,19 +140,34 @@ export default function BudgetsPage() {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const { showToast } = useToast();
 
-  const [formData, setFormData] = useState({
+  const budgetForm = useForm<BudgetFormValues>({
+    resolver: zodResolver(budgetFormSchema),
+    mode: 'onSubmit',
+    defaultValues: {
     category_id: '',
     budget_amount: '',
+    budget_basis: 'monthly' as 'monthly' | 'daily',
+    daily_amount: '',
+    budget_days: String(getDaysInMonth(getCurrentMonth())),
     warning_percent: '80',
     daily_limit: '',
     frequency_limit: '',
     frequency_period: '',
+    },
   });
+  const formData = budgetForm.watch();
+  const setFormData = (updater: (previous: BudgetFormValues) => BudgetFormValues) => {
+    const next = updater(budgetForm.getValues());
+    for (const key of Object.keys(next) as (keyof BudgetFormValues)[]) budgetForm.setValue(key, next[key], { shouldValidate: true, shouldDirty: true });
+  };
 
   const resetForm = () => {
-    setFormData({
+    budgetForm.reset({
       category_id: '',
       budget_amount: '',
+      budget_basis: 'monthly',
+      daily_amount: '',
+      budget_days: String(getDaysInMonth(month)),
       warning_percent: '80',
       daily_limit: '',
       frequency_limit: '',
@@ -182,12 +227,18 @@ export default function BudgetsPage() {
         remaining: totals.totalBudget - totals.totalSpent,
       };
     }, [budgets]);
+  const calculatedBudgetTotal = formData.budget_basis === 'daily'
+    ? parseMoneyInput(formData.daily_amount) * Number(formData.budget_days || 0)
+    : parseMoneyInput(formData.budget_amount);
 
   const handleEdit = (budget: Budget) => {
     setEditingBudget(budget);
-    setFormData({
-      category_id: budget.category_id,
-      budget_amount: String(budget.budget_amount),
+    budgetForm.reset({
+      category_id: String(budget.category_id),
+      budget_amount: formatMoneyInput(budget.budget_amount),
+      budget_basis: budget.budget_basis || 'monthly',
+      daily_amount: budget.daily_amount ? formatMoneyInput(budget.daily_amount) : '',
+      budget_days: String(budget.budget_days || getDaysInMonth(budget.month || month)),
       warning_percent: String(budget.warning_percent),
       daily_limit: budget.daily_limit ? String(budget.daily_limit) : '',
       frequency_limit: budget.frequency_limit
@@ -204,20 +255,28 @@ export default function BudgetsPage() {
     setIsDialogOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (values: BudgetFormValues) => {
+    if (values.budget_basis === 'daily' && Number(values.budget_days) > getDaysInMonth(month)) {
+      budgetForm.setError('budget_days', { message: `Tháng này chỉ có ${getDaysInMonth(month)} ngày` });
+      return;
+    }
     try {
       const res = await fetch('/api/budgets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          category_id: formData.category_id,
+          category_id: values.category_id,
           month,
-          budget_amount: Number(formData.budget_amount),
-          warning_percent: Number(formData.warning_percent),
-          daily_limit: Number(formData.daily_limit) || 0,
-          frequency_limit: Number(formData.frequency_limit) || 0,
-          frequency_period: formData.frequency_period || '',
+          budget_basis: values.budget_basis,
+          budget_amount: values.budget_basis === 'daily'
+            ? parseMoneyInput(values.daily_amount) * Number(values.budget_days)
+            : parseMoneyInput(values.budget_amount),
+          daily_amount: parseMoneyInput(values.daily_amount),
+          budget_days: Number(values.budget_days),
+          warning_percent: Number(values.warning_percent),
+          daily_limit: parseMoneyInput(values.daily_limit),
+          frequency_limit: Number(values.frequency_limit) || 0,
+          frequency_period: values.frequency_period || '',
         }),
       });
 
@@ -229,6 +288,9 @@ export default function BudgetsPage() {
         setIsDialogOpen(false);
         resetForm();
         fetchBudgets();
+      } else {
+        const result = await res.json() as { error?: string };
+        showToast(result.error || 'Không thể lưu ngân sách', 'error');
       }
     } catch (error) {
       console.error('Error saving budget:', error);
@@ -313,13 +375,13 @@ export default function BudgetsPage() {
   };
 
   return (
-    <div className="pb-nav max-w-lg mx-auto min-h-screen bg-background text-foreground flex flex-col">
+    <div className="pb-nav mx-auto flex min-h-screen w-full max-w-7xl flex-col bg-background text-foreground">
       <div className="p-4 flex items-center justify-between border-b border-border sticky top-0 bg-background/80 backdrop-blur-md z-10">
         <h1 className="text-xl font-bold">Ngân sách</h1>
         <MonthPicker month={month} onChange={setMonth} />
       </div>
 
-      <div className="p-4 space-y-6 flex-1">
+      <div className="flex-1 space-y-6 p-4 md:p-8">
         {/* Overall summary */}
         <Card className="rounded-2xl border-border bg-card shadow-sm">
           <CardHeader className="pb-2">
@@ -374,7 +436,7 @@ export default function BudgetsPage() {
         {/* Budget jars header */}
         <div className="flex flex-wrap justify-between items-center gap-2">
           <h2 className="text-lg font-bold">Hũ chi tiêu</h2>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               size="sm"
               onClick={openCreateDialog}
@@ -418,8 +480,8 @@ export default function BudgetsPage() {
               Tạo ngân sách đầu tiên
             </Button>
           </div>
-        ) : (
-          <div className="space-y-4">
+        ) : <>
+          <div className="grid gap-4 lg:grid-cols-2 xl:hidden">
             {budgets.map((budget) => {
               const pct = getPercentage(
                 budget.spent_amount,
@@ -449,6 +511,7 @@ export default function BudgetsPage() {
                             {formatCurrency(budget.spent_amount)} /{' '}
                             {formatCurrency(budget.budget_amount)}
                           </p>
+                          {budget.budget_basis === 'daily' ? <p className="mt-1 text-[11px] text-blue-600">{formatCurrency(budget.daily_amount)} / ngày × {budget.budget_days} ngày</p> : null}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -466,8 +529,7 @@ export default function BudgetsPage() {
                           {Math.round(pct)}%
                         </Badge>
                         <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
+                          <DropdownMenuTrigger asChild>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -475,8 +537,7 @@ export default function BudgetsPage() {
                               >
                                 <MoreVertical className="h-4 w-4 text-muted-foreground" />
                               </Button>
-                            }
-                          />
+                          </DropdownMenuTrigger>
                           <DropdownMenuContent
                             align="end"
                             className="rounded-xl"
@@ -588,7 +649,8 @@ export default function BudgetsPage() {
               );
             })}
           </div>
-        )}
+          <BudgetTable budgets={budgets} onEdit={handleEdit} onDelete={setPendingDeleteId} />
+        </>}
       </div>
 
       {/* Add/Edit Dialog */}
@@ -609,7 +671,8 @@ export default function BudgetsPage() {
             </DialogDescription>
           </DialogHeader>
           <form
-            onSubmit={handleSubmit}
+            onSubmit={budgetForm.handleSubmit(handleSubmit)}
+            noValidate
             className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]"
           >
             <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain px-5 py-5">
@@ -628,12 +691,16 @@ export default function BudgetsPage() {
                   disabled={Boolean(editingBudget)}
                 >
                   <SelectTrigger className="h-12 w-full rounded-2xl bg-muted/40 px-4 text-base data-[size=default]:h-12">
-                    <SelectValue placeholder="Chọn danh mục chi tiêu" />
+                    <SelectValue placeholder="Chọn danh mục chi tiêu">
+                      {(() => {
+                        const selectedCategory = categories.find((category) => String(category.id) === formData.category_id);
+                        return selectedCategory ? <><CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-7 rounded-lg" iconClassName="size-3.5" />{selectedCategory.name}</> : 'Chọn danh mục chi tiêu';
+                      })()}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent
                     side="bottom"
                     align="start"
-                    alignItemWithTrigger={false}
                     className="max-h-72 rounded-2xl p-1.5"
                   >
                     {categories
@@ -641,8 +708,8 @@ export default function BudgetsPage() {
                       .map((category) => (
                         <SelectItem
                           key={category.id}
-                          value={category.id}
-                          className="min-h-12 rounded-xl px-2 py-2 text-sm font-medium"
+                          value={String(category.id)}
+                          className="min-h-11 rounded-xl px-2 py-2 text-sm font-medium"
                         >
                           <CategoryIcon
                             name={category.name}
@@ -650,35 +717,43 @@ export default function BudgetsPage() {
                             className="size-8 rounded-xl"
                             iconClassName="size-4"
                           />
-                          {category.name}
+                          <span className="truncate pr-5">{category.name}</span>
                         </SelectItem>
                       ))}
                   </SelectContent>
                 </Select>
+                {budgetForm.formState.errors.category_id?.message ? <p role="alert" className="text-xs font-medium text-red-600">{budgetForm.formState.errors.category_id.message}</p> : null}
               </div>
 
-              <div className="space-y-2">
-                <Label className="text-xs font-semibold text-muted-foreground">
-                  Mức chi trong tháng
-                </Label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted-foreground">
-                    đ
-                  </span>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    required
-                    className="h-12 w-full rounded-xl bg-muted/40 pl-8 text-base font-semibold tabular-nums"
-                    placeholder="Ví dụ: 3.900.000"
-                    value={formData.budget_amount}
-                    onChange={(e) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        budget_amount: e.target.value,
-                      }))
-                    }
-                  />
+              <div className="space-y-3">
+                <Label className="text-xs font-semibold text-muted-foreground">Cách đặt ngân sách</Label>
+                <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted p-1">
+                  <button type="button" onClick={() => setFormData((prev) => ({ ...prev, budget_basis: 'monthly' }))} className={cn('min-h-10 rounded-lg text-sm font-semibold', formData.budget_basis === 'monthly' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground')}>Tổng theo tháng</button>
+                  <button type="button" onClick={() => setFormData((prev) => ({ ...prev, budget_basis: 'daily' }))} className={cn('min-h-10 rounded-lg text-sm font-semibold', formData.budget_basis === 'daily' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground')}>Mức theo ngày</button>
+                </div>
+                {formData.budget_basis === 'monthly' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="budget-monthly-amount" className="text-xs text-muted-foreground">Tổng ngân sách tháng</Label>
+                    <Input id="budget-monthly-amount" inputMode="numeric" aria-invalid={Boolean(budgetForm.formState.errors.budget_amount)} className="h-12 w-full rounded-xl bg-muted/40 text-base font-semibold tabular-nums" placeholder="Ví dụ: 3.900.000" value={formData.budget_amount} onChange={(event) => setFormData((prev) => ({ ...prev, budget_amount: formatMoneyInput(event.target.value) }))} />
+                    {budgetForm.formState.errors.budget_amount?.message ? <p role="alert" className="text-xs font-medium text-red-600">{budgetForm.formState.errors.budget_amount.message}</p> : null}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="budget-daily-amount" className="text-xs text-muted-foreground">Ngân sách mỗi ngày</Label>
+                      <Input id="budget-daily-amount" inputMode="numeric" aria-invalid={Boolean(budgetForm.formState.errors.daily_amount)} className="h-12 w-full rounded-xl bg-muted/40 text-base font-semibold tabular-nums" placeholder="100.000" value={formData.daily_amount} onChange={(event) => setFormData((prev) => ({ ...prev, daily_amount: formatMoneyInput(event.target.value) }))} />
+                      {budgetForm.formState.errors.daily_amount?.message ? <p role="alert" className="text-xs font-medium text-red-600">{budgetForm.formState.errors.daily_amount.message}</p> : null}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="budget-days" className="text-xs text-muted-foreground">Số ngày</Label>
+                      <Input id="budget-days" type="number" inputMode="numeric" aria-invalid={Boolean(budgetForm.formState.errors.budget_days)} min="1" max={getDaysInMonth(month)} step="1" className="h-12 rounded-xl bg-muted/40 text-base tabular-nums" value={formData.budget_days} onChange={(event) => setFormData((prev) => ({ ...prev, budget_days: event.target.value }))} />
+                      {budgetForm.formState.errors.budget_days?.message ? <p role="alert" className="text-xs font-medium text-red-600">{budgetForm.formState.errors.budget_days.message}</p> : null}
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center justify-between rounded-xl bg-emerald-50 px-3 py-2.5 text-sm">
+                  <span className="text-emerald-800">Tổng ngân sách tháng</span>
+                  <span className="font-semibold tabular-nums text-emerald-800">{formatCurrency(calculatedBudgetTotal)}</span>
                 </div>
               </div>
 
@@ -719,27 +794,20 @@ export default function BudgetsPage() {
                 </div>
               </div>
 
-              <details
-                className="group rounded-2xl border border-border bg-card"
-                open={isAdvancedOpen}
-                onToggle={(event) =>
-                  setIsAdvancedOpen(event.currentTarget.open)
-                }
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-3 text-sm font-medium marker:content-none">
+              <CollapsiblePrimitive.Root open={isAdvancedOpen} onOpenChange={setIsAdvancedOpen} className="group rounded-2xl border border-border bg-card">
+                <CollapsiblePrimitive.Trigger className="flex w-full cursor-pointer list-none items-center justify-between px-3 py-3 text-sm font-medium marker:content-none">
                   <span className="flex items-center gap-2">
                     <CalendarDays className="size-4 text-primary" />
                     Thêm giới hạn nâng cao
                   </span>
-                  <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-                </summary>
-                <div className="space-y-4 border-t border-border px-3 pb-3 pt-4">
+                  <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+                </CollapsiblePrimitive.Trigger>
+                <CollapsiblePrimitive.Content className="space-y-4 border-t border-border px-3 pb-3 pt-4">
                   <div className="space-y-2">
                     <Label className="text-xs text-muted-foreground">
-                      Tối đa mỗi ngày
+                      Trần chi tiêu mỗi ngày (tùy chọn)
                     </Label>
                     <Input
-                      type="number"
                       inputMode="numeric"
                       className="h-10 w-full rounded-xl bg-muted/40 tabular-nums"
                       placeholder="Ví dụ: 130.000đ"
@@ -747,7 +815,7 @@ export default function BudgetsPage() {
                       onChange={(e) =>
                         setFormData((prev) => ({
                           ...prev,
-                          daily_limit: e.target.value,
+                          daily_limit: formatMoneyInput(e.target.value),
                         }))
                       }
                     />
@@ -799,15 +867,15 @@ export default function BudgetsPage() {
                       </div>
                     </div>
                   </div>
-                </div>
-              </details>
+                </CollapsiblePrimitive.Content>
+              </CollapsiblePrimitive.Root>
             </div>
 
             <div className="border-t border-border bg-background px-5 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-3">
               <Button
                 type="submit"
                 className="h-12 w-full rounded-xl font-semibold"
-                disabled={!formData.category_id || !formData.budget_amount}
+                disabled={budgetForm.formState.isSubmitting}
               >
                 {editingBudget ? 'Cập nhật' : 'Lưu ngân sách'}
               </Button>
@@ -876,4 +944,13 @@ export default function BudgetsPage() {
       </Dialog>
     </div>
   );
+}
+
+function getDaysInMonth(month: string) {
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  return match ? new Date(Number(match[1]), Number(match[2]), 0).getDate() : 30;
+}
+
+function BudgetTable({ budgets, onEdit, onDelete }: { budgets: Budget[]; onEdit: (budget: Budget) => void; onDelete: (id: string) => void }) {
+  return <section className="hidden overflow-hidden rounded-2xl border border-border bg-card xl:block"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-6 py-3 font-medium">Danh mục</th><th className="px-4 py-3 font-medium">Đã chi</th><th className="px-4 py-3 font-medium">Ngân sách</th><th className="px-4 py-3 font-medium">Tỷ lệ</th><th className="px-4 py-3 font-medium">Trạng thái</th><th className="w-28 px-4 py-3" /></tr></thead><tbody className="divide-y divide-border">{budgets.map((budget) => { const pct = getPercentage(budget.spent_amount, budget.budget_amount); const tone = pct >= 100 ? 'text-rose-600' : pct >= budget.warning_percent ? 'text-amber-600' : 'text-emerald-600'; return <tr key={budget.id} className="group hover:bg-muted/30"><td className="px-6 py-4"><span className="inline-flex items-center gap-3"><CategoryIcon name={budget.category_name} color={budget.category_color} className="size-9 rounded-xl"/><span><span className="block font-semibold text-foreground">{budget.category_name}</span>{budget.budget_basis === 'daily' ? <span className="mt-0.5 block text-xs text-muted-foreground">{formatCurrency(budget.daily_amount)}/ngày × {budget.budget_days} ngày</span> : null}</span></span></td><td className="whitespace-nowrap px-4 py-4 font-medium tabular-nums text-foreground">{formatCurrency(budget.spent_amount)}</td><td className="whitespace-nowrap px-4 py-4 tabular-nums text-muted-foreground">{formatCurrency(budget.budget_amount)}</td><td className="min-w-48 px-4 py-4"><div className="flex items-center gap-3"><Progress value={pct} className="h-2 flex-1" indicatorColor={tone.replace('text-', 'bg-')} /><span className={cn('w-10 text-right text-xs font-semibold tabular-nums', tone)}>{Math.round(pct)}%</span></div></td><td className={cn('px-4 py-4 text-xs font-semibold', tone)}>{pct >= 100 ? 'Đã vượt mức' : pct >= budget.warning_percent ? 'Sắp chạm hạn mức' : 'Trong kế hoạch'}</td><td className="px-4 py-3"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" onClick={() => onEdit(budget)}>Sửa</Button><Button variant="ghost" size="icon-sm" aria-label={`Xóa ngân sách ${budget.category_name}`} onClick={() => onDelete(budget.id)} className="text-muted-foreground hover:text-rose-600"><Trash2 className="size-4"/></Button></div></td></tr>; })}</tbody></table></div></section>;
 }

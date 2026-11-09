@@ -1,11 +1,18 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "@fontsource/be-vietnam-pro/vietnamese-400.css";
+@import "@fontsource/be-vietnam-pro/vietnamese-500.css";
+@import "@fontsource/be-vietnam-pro/vietnamese-600.css";
+@import "@fontsource/be-vietnam-pro/latin-400.css";
+@import "@fontsource/be-vietnam-pro/latin-500.css";
+@import "@fontsource/be-vietnam-pro/latin-600.css";
+@import "@fontsource-variable/space-grotesk";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: var(--app-font-sans);
+    --font-heading: var(--app-font-display);
+    --font-display: var(--app-font-display);
     --font-sans: var(--app-font-sans);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
@@ -46,50 +53,49 @@
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
 
-    /* Spendee brand colors */
-    --color-spendee-green: #00BC7C;
-    --color-spendee-red: #FE5A61;
-    --color-spendee-pink: #FF6FAF;
-    --color-spendee-blue: #40C3F9;
-    --color-spendee-yellow: #FFC053;
-    --color-spendee-dark: #344554;
+    --color-spendee-green: #16A34A;
+    --color-spendee-red: #DC2626;
+    --color-spendee-pink: #DB2777;
+    --color-spendee-blue: #16A34A;
+    --color-spendee-yellow: #D97706;
+    --color-spendee-dark: #0F172A;
 }
 
-/* ===== SPENDEE LIGHT THEME ===== */
 :root {
-    --app-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Arial, sans-serif;
-    --background: #F7F9FB;
-    --foreground: #2D3748;
+    --app-font-sans: 'Be Vietnam Pro', sans-serif;
+    --app-font-display: 'Space Grotesk Variable', 'Be Vietnam Pro', sans-serif;
+    --background: #F1F5F9;
+    --foreground: #0F172A;
     --card: #FFFFFF;
-    --card-foreground: #2D3748;
+    --card-foreground: #0F172A;
     --popover: #FFFFFF;
-    --popover-foreground: #2D3748;
-    --primary: #00BC7C;
+    --popover-foreground: #0F172A;
+    --primary: #16A34A;
     --primary-foreground: #FFFFFF;
-    --secondary: #F1F5F9;
-    --secondary-foreground: #344554;
-    --muted: #F1F5F9;
-    --muted-foreground: #94A3B8;
-    --accent: #ECFDF5;
-    --accent-foreground: #00BC7C;
-    --destructive: #FE5A61;
-    --border: #E2E8F0;
-    --input: #E2E8F0;
-    --ring: #00BC7C;
-    --chart-1: #00BC7C;
-    --chart-2: #40C3F9;
-    --chart-3: #FFC053;
-    --chart-4: #FF6FAF;
-    --chart-5: #FE5A61;
-    --radius: 0.75rem;
+    --secondary: #E2E8F0;
+    --secondary-foreground: #334155;
+    --muted: #F8FAFC;
+    --muted-foreground: #64748B;
+    --accent: #DCFCE7;
+    --accent-foreground: #166534;
+    --destructive: #DC2626;
+    --border: #CBD5E1;
+    --input: #CBD5E1;
+    --ring: #16A34A;
+    --chart-1: #16A34A;
+    --chart-2: #16A34A;
+    --chart-3: #D97706;
+    --chart-4: #7C3AED;
+    --chart-5: #DC2626;
+    --radius: 0.625rem;
     --sidebar: #FFFFFF;
-    --sidebar-foreground: #344554;
-    --sidebar-primary: #00BC7C;
+    --sidebar-foreground: #334155;
+    --sidebar-primary: #16A34A;
     --sidebar-primary-foreground: #FFFFFF;
-    --sidebar-accent: #F1F5F9;
-    --sidebar-accent-foreground: #344554;
-    --sidebar-border: #E2E8F0;
-    --sidebar-ring: #00BC7C;
+    --sidebar-accent: #DCFCE7;
+    --sidebar-accent-foreground: #166534;
+    --sidebar-border: #CBD5E1;
+    --sidebar-ring: #16A34A;
 }
 
 @media (min-width: 768px) {

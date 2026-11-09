@@ -43,6 +43,9 @@ export async function initializeDatabase(db: Client) {
       budget_amount REAL NOT NULL,
       warning_percent REAL NOT NULL DEFAULT 80,
       daily_limit REAL DEFAULT 0,
+      budget_basis TEXT NOT NULL DEFAULT 'monthly',
+      daily_amount REAL NOT NULL DEFAULT 0,
+      budget_days INTEGER NOT NULL DEFAULT 0,
       frequency_limit INTEGER DEFAULT 0,
       frequency_period TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -103,9 +106,41 @@ export async function initializeDatabase(db: Client) {
       PRIMARY KEY (user_id, key),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS ai_providers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      protocol TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      secret_encrypted TEXT NOT NULL,
+      secret_hint TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      default_model_id TEXT DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_models (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      provider_id INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      label TEXT DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
+      UNIQUE(provider_id, model_id)
+    );
   `);
 
   await migrateLegacyTables(db);
+  await addColumnIfMissing(db, 'budget_jars', 'budget_basis', "TEXT NOT NULL DEFAULT 'monthly'");
+  await addColumnIfMissing(db, 'budget_jars', 'daily_amount', 'REAL NOT NULL DEFAULT 0');
+  await addColumnIfMissing(db, 'budget_jars', 'budget_days', 'INTEGER NOT NULL DEFAULT 0');
 
   await db.executeMultiple(`
     CREATE INDEX IF NOT EXISTS idx_expenses_user_date
@@ -120,6 +155,10 @@ export async function initializeDatabase(db: Client) {
       ON debts(user_id, status);
     CREATE INDEX IF NOT EXISTS idx_debt_payments_user_debt_date
       ON debt_payments(user_id, debt_id, payment_date);
+    CREATE INDEX IF NOT EXISTS idx_ai_providers_user_enabled
+      ON ai_providers(user_id, enabled);
+    CREATE INDEX IF NOT EXISTS idx_ai_models_user_provider
+      ON ai_models(user_id, provider_id, enabled, position);
   `);
 
   // Insert default categories

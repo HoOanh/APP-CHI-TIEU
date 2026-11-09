@@ -25,8 +25,26 @@ export function formatShortDate(date: string): string {
 }
 
 export function getCurrentMonth(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+  return getVietnamToday().slice(0, 7);
+}
+
+export function getVietnamToday(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+export function formatMoneyInput(value: number | string): string {
+  const digits = String(value).replace(/\D/g, '');
+  if (!digits) return '';
+  return new Intl.NumberFormat('vi-VN').format(Number(digits));
+}
+
+export function parseMoneyInput(value: string): number {
+  const digits = value.replace(/\D/g, '');
+  return Number(digits) || 0;
 }
 
 export function getMonthLabel(month: string): string {

@@ -7,6 +7,9 @@ interface BudgetImportItem {
   category_id?: string | number;
   month?: string;
   budget_amount?: number;
+  budget_basis?: 'monthly' | 'daily';
+  daily_amount?: number;
+  budget_days?: number;
   warning_percent?: number;
   daily_limit?: number;
   frequency_limit?: number;
@@ -57,7 +60,10 @@ export async function POST(request: NextRequest) {
       }
       const item = rawItem as BudgetImportItem;
       const month = item.month || defaultMonth || '';
-      const amount = Number(item.budget_amount);
+      const basis = item.budget_basis === 'daily' ? 'daily' : 'monthly';
+      const dailyAmount = Number(item.daily_amount);
+      const days = Number(item.budget_days);
+      const amount = basis === 'daily' ? dailyAmount * days : Number(item.budget_amount);
       const category = categories.find((row) => {
         if (item.category_id !== undefined) {
           return String(row.id) === String(item.category_id);
@@ -72,7 +78,7 @@ export async function POST(request: NextRequest) {
         errors.push(`Dòng ${index + 1}: không tìm thấy danh mục.`);
       } else if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
         errors.push(`Dòng ${index + 1}: month phải có dạng YYYY-MM.`);
-      } else if (!Number.isFinite(amount) || amount <= 0) {
+      } else if (!Number.isFinite(amount) || amount <= 0 || (basis === 'daily' && (!Number.isInteger(days) || days < 1 || days > getDaysInMonth(month)))) {
         errors.push(`Dòng ${index + 1}: budget_amount phải lớn hơn 0.`);
       } else {
         validItems.push({
@@ -80,6 +86,9 @@ export async function POST(request: NextRequest) {
           category_id: String(category.id),
           month,
           budget_amount: amount,
+          budget_basis: basis,
+          daily_amount: basis === 'daily' ? dailyAmount : 0,
+          budget_days: basis === 'daily' ? days : 0,
         });
       }
     });
@@ -91,11 +100,14 @@ export async function POST(request: NextRequest) {
     await db.batch(
       validItems.map((item) => ({
         sql: `INSERT INTO budget_jars (
-                user_id, category_id, month, budget_amount, warning_percent,
+                user_id, category_id, month, budget_amount, budget_basis, daily_amount, budget_days, warning_percent,
                 daily_limit, frequency_limit, frequency_period
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(user_id, category_id, month) DO UPDATE SET
                 budget_amount = excluded.budget_amount,
+                budget_basis = excluded.budget_basis,
+                daily_amount = excluded.daily_amount,
+                budget_days = excluded.budget_days,
                 warning_percent = excluded.warning_percent,
                 daily_limit = excluded.daily_limit,
                 frequency_limit = excluded.frequency_limit,
@@ -105,6 +117,9 @@ export async function POST(request: NextRequest) {
           item.category_id,
           item.month,
           item.budget_amount,
+          item.budget_basis || 'monthly',
+          item.daily_amount || 0,
+          item.budget_days || 0,
           Math.min(100, Math.max(1, Number(item.warning_percent) || 80)),
           Math.max(0, Number(item.daily_limit) || 0),
           Math.max(0, Number(item.frequency_limit) || 0),
@@ -122,4 +137,9 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
+}
+
+function getDaysInMonth(month: string) {
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  return match ? new Date(Number(match[1]), Number(match[2]), 0).getDate() : 0;
 }

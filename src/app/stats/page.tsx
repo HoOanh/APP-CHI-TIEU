@@ -49,14 +49,14 @@ export default function StatsPage() {
   const change = data?.previous_total ? ((data.total - data.previous_total) / data.previous_total) * 100 : null;
 
   return (
-    <div className="min-h-screen w-full max-w-lg bg-[#f7f9fb] pb-nav">
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl">
+    <div className="mx-auto min-h-screen w-full max-w-7xl bg-[#f7f9fb] pb-nav">
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
         <div className="flex items-center justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h1></div><PeriodPicker period={period} month={month} year={year} onMonth={setMonth} onYear={setYear} /></div>
         <Tabs value={period} onValueChange={(value) => setPeriod(value as Period)} className="mt-4"><TabsList className="grid w-full grid-cols-4 rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
       </header>
 
-      <main className="space-y-5 px-4 py-5">
-        {isLoading ? <StatsSkeleton /> : data ? <>
+      <main className="space-y-5 px-4 py-5 md:px-8 md:py-7 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0">
+        {isLoading ? <div className="lg:col-span-2"><StatsSkeleton /></div> : data ? <>
           <section className="overflow-hidden rounded-[22px] bg-[#344554] p-5 text-white shadow-[0_18px_36px_-25px_rgba(39,55,73,0.8)]">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">Tổng chi tiêu</p>
             <p className="mt-2 text-[31px] font-semibold leading-none tracking-[-0.055em] tabular-nums">{formatCurrency(data.total)}</p>
@@ -66,11 +66,11 @@ export default function StatsPage() {
           <section className="grid grid-cols-2 divide-x divide-slate-200 rounded-2xl border border-slate-200 bg-white py-3"><Metric icon={ReceiptText} label="Trung bình" value={formatCurrency(data.daily_average)} suffix={period === 'daily' ? '/ ngày' : '/ kỳ'} /><Metric icon={WalletCards} label="Danh mục nhiều nhất" value={topCategory?.category_name || 'Chưa có'} suffix={topCategory ? formatCurrency(topCategory.total) : ''} className="pl-4" /></section>
 
           {data.total > 0 ? <>
-            <StatsCharts byDate={data.by_date} period={period} total={data.total} />
+            <div className="lg:col-span-2"><StatsCharts byDate={data.by_date} period={period} total={data.total} /></div>
             <section className="grid grid-cols-2 gap-3"><Insight title="Ngày chi cao nhất" value={peak ? formatCurrency(peak.total) : '—'} detail={peak ? (period === 'daily' ? formatShortDate(peak.date) : peak.date) : ''} tone="rose" /><Insight title="Tỷ trọng lớn nhất" value={topCategory ? `${Math.round(getPercentage(topCategory.total, data.total))}%` : '—'} detail={topCategory?.category_name || ''} tone="mint" /></section>
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-[15px] font-semibold text-slate-800">Cơ cấu chi tiêu</h2><p className="mt-0.5 text-xs text-slate-400">Danh mục theo tỷ trọng trong kỳ đã chọn</p></div><div className="divide-y divide-slate-100">{data.by_category.map((item) => <CategoryRow key={item.category_name} item={item} total={data.total} />)}</div></section>
-          </> : <EmptyStats />}
-        </> : <EmptyStats />}
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white lg:col-span-2"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-[15px] font-semibold text-slate-800">Cơ cấu chi tiêu</h2><p className="mt-0.5 text-xs text-slate-400">Danh mục theo tỷ trọng trong kỳ đã chọn</p></div><div className="divide-y divide-slate-100 lg:grid lg:grid-cols-2 lg:divide-y-0 lg:divide-x">{data.by_category.map((item) => <CategoryRow key={item.category_name} item={item} total={data.total} />)}</div></section>
+          </> : <div className="lg:col-span-2"><EmptyStats /></div>}
+        </> : <div className="lg:col-span-2"><EmptyStats /></div>}
       </main>
     </div>
   );
