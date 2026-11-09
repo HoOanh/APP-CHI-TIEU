@@ -1,6 +1,8 @@
 import { GoogleGenAI, type Part } from '@google/genai';
 import { getDb } from './db';
 import { decryptSecret } from './secrets';
+import { callConfiguredAi, type AiInputImage } from './ai-provider';
+import { getVietnamToday } from './utils';
 
 // Stable, production Gemini Developer API models. Keep the model IDs explicit
 // instead of relying on preview aliases that can disappear without notice.
@@ -38,7 +40,7 @@ async function getApiKeys(userId?: number): Promise<string[]> {
   }
 
   if (keys.length === 0) {
-    throw new Error('Gemini API key chưa được cấu hình. Vào Settings để thêm API key.');
+    throw new Error('AI chưa được cấu hình. Vào Cài đặt để thêm provider, API key và model.');
   }
 
   return keys;
@@ -65,6 +67,20 @@ async function callGeminiWithFallback(
   parts: ContentPart[],
   userId?: number,
 ): Promise<string> {
+  if (userId) {
+    const prompt = parts.find((part): part is string => typeof part === 'string') || '';
+    const images: AiInputImage[] = parts.flatMap((part) => {
+      if (typeof part !== 'object' || !('inlineData' in part) || !part.inlineData) return [];
+      const base64Data = part.inlineData.data;
+      const mimeType = part.inlineData.mimeType;
+      return typeof base64Data === 'string' && typeof mimeType === 'string'
+        ? [{ base64Data, mimeType }]
+        : [];
+    });
+    const configuredResponse = await callConfiguredAi(userId, prompt, images);
+    if (configuredResponse !== null) return configuredResponse;
+  }
+
   const apiKeys = await getApiKeys(userId);
   const errors: string[] = [];
 
@@ -193,9 +209,51 @@ function normalizeTransaction(
     description: String(parsed.description || fallbackDescription),
     category: String(parsed.category || 'Khác'),
     merchant: String(parsed.merchant || ''),
-    date: String(parsed.date || new Date().toISOString().split('T')[0]),
+    date: isValidIsoDate(parsed.date) ? parsed.date : getVietnamToday(),
     type: parsed.type === 'income' ? 'income' : 'expense',
   };
+}
+
+function isValidIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function explicitDateInMessage(message: string): string | null {
+  const isoMatch = message.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) {
+    const isoDate = `${isoMatch[1]}-${String(Number(isoMatch[2])).padStart(2, '0')}-${String(Number(isoMatch[3])).padStart(2, '0')}`;
+    if (isValidIsoDate(isoDate)) return isoDate;
+  }
+  const match = message.match(/\b(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?\b/);
+  const naturalMatch = message.match(/(?:ngày|mùng|mồng)?\s*(\d{1,2})\s+tháng\s+(\d{1,2})(?:\s+năm\s+(\d{4}))?/i);
+  if (!match && !naturalMatch) return null;
+  const dateParts = match || naturalMatch;
+  const day = Number(dateParts?.[1]);
+  const month = Number(dateParts?.[2]);
+  const currentYear = Number(getVietnamToday().slice(0, 4));
+  const yearText = dateParts?.[3];
+  const year = yearText ? Number(yearText.length === 2 ? `20${yearText}` : yearText) : currentYear;
+  const candidate = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return isValidIsoDate(candidate) ? candidate : null;
+}
+
+function resolveMentionedDate(message: string): string | null {
+  const explicit = explicitDateInMessage(message);
+  if (explicit) return explicit;
+  const normalized = message.toLocaleLowerCase('vi');
+  if (/\b(hôm kia|ngày kia)\b/.test(normalized)) return shiftIsoDate(getVietnamToday(), -2);
+  if (/\b(hôm qua|hôm trước)\b/.test(normalized)) return shiftIsoDate(getVietnamToday(), -1);
+  if (/\b(ngày mai|mai)\b/.test(normalized)) return shiftIsoDate(getVietnamToday(), 1);
+  if (/\b(hôm nay|hôm ni|nay)\b/.test(normalized)) return getVietnamToday();
+  return null;
+}
+
+function shiftIsoDate(value: string, offset: number) {
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
 }
 
 export async function analyzeTransactions(
@@ -207,6 +265,7 @@ export async function analyzeTransactions(
 ): Promise<ParsedTransaction[]> {
   const expenseCategoryList = categoryPolicy.expenseCategories.join(', ') || '(chưa có hũ chi tiêu)';
   const incomeCategoryList = categoryPolicy.incomeCategories.join(', ') || '(chưa có danh mục)';
+  const today = getVietnamToday();
   const prompt = `Bạn là bộ máy bóc tách giao dịch tài chính tiếng Việt.
 Đọc TOÀN BỘ ảnh và nội dung người dùng, tìm TẤT CẢ giao dịch riêng biệt. Một ảnh có thể chứa nhiều dòng giao dịch; nhiều ảnh phải được xử lý đầy đủ.
 
@@ -224,6 +283,7 @@ Quy tắc bắt buộc khi phân loại:
 3. Dùng merchant, description và note/nội dung người dùng để đối chiếu lịch sử trước; ví dụ giao dịch/ghi chú tương tự phải theo danh mục lịch sử nếu danh mục đó được phép ở (1) hoặc (2).
 4. Tuyệt đối không bịa danh mục mới, không chọn theo cảm tính và không dùng danh mục thu nhập cho khoản chi.
 Không tự suy diễn "chuyển khoản" là Mua sắm nếu note cho biết mục đích khác.
+Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Nếu nội dung nói "hôm nay" hoặc không nêu ngày thì dùng chính xác ${today}. Ngày viết theo tiếng Việt d/M, dd/MM hoặc "ngày d tháng M" là ngày/tháng; nếu thiếu năm thì dùng năm hiện tại ${today.slice(0, 4)}.
 Không gộp nhiều giao dịch thành một. Loại bỏ các dòng chỉ là số dư, tổng cộng, phí đã nằm trong tổng hoặc giao dịch trùng giữa các ảnh.
 
 Lịch sử tham chiếu:
@@ -239,8 +299,10 @@ Chỉ trả JSON array hợp lệ.`;
     })),
   ];
   const text = await callGeminiWithFallback(parts, userId);
+  const explicitDate = resolveMentionedDate(userMessage);
   return parseJsonArrayResponse(text)
     .map((item) => normalizeTransaction(item, userMessage))
+    .map((item) => explicitDate ? { ...item, date: explicitDate } : item)
     .filter((item) => item.amount > 0);
 }
 
@@ -250,6 +312,7 @@ export async function parseTransactionsText(
   historyContext: string,
   userId?: number,
 ): Promise<ParsedTransaction[]> {
+  const today = getVietnamToday();
   const prompt = `Tách TẤT CẢ giao dịch trong nội dung sau thành JSON array.
 Mỗi phần tử gồm amount (số nguyên dương; k=1000, tr=1000000), description, category, merchant, date (YYYY-MM-DD), type ("income"|"expense").
 Quy tắc danh mục BẮT BUỘC:
@@ -257,11 +320,14 @@ Quy tắc danh mục BẮT BUỘC:
 - type = "income": chỉ chọn một danh mục thu nhập phù hợp: ${categoryPolicy.incomeCategories.join(', ') || '(chưa có danh mục)'}.
 Phân loại dựa trên mô tả/note trước, sau đó đối chiếu lịch sử tương tự. Không tự tạo danh mục hoặc chọn danh mục ngoài danh sách:
 ${historyContext || 'Chưa có lịch sử.'}
+Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Nếu nội dung nói "hôm nay" hoặc không nêu ngày thì dùng chính xác ${today}. Ngày d/M, dd/MM hoặc "ngày d tháng M" được hiểu là ngày/tháng; nếu thiếu năm thì dùng năm ${today.slice(0, 4)}.
 Không gộp nhiều giao dịch. Nội dung: "${message}"
 Chỉ trả JSON array hợp lệ.`;
   const text = await callGeminiWithFallback([prompt], userId);
+  const explicitDate = resolveMentionedDate(message) || today;
   return parseJsonArrayResponse(text)
     .map((item) => normalizeTransaction(item, message))
+    .map((item) => explicitDate ? { ...item, date: explicitDate } : item)
     .filter((item) => item.amount > 0);
 }
 
@@ -272,6 +338,7 @@ export async function correctPendingTransactions(
   historyContext: string,
   userId?: number,
 ): Promise<ParsedTransaction[]> {
+  const today = getVietnamToday();
   const prompt = `Bạn đang chỉnh sửa các giao dịch CHỜ LƯU theo phản hồi của người dùng.
 Trả về JSON array gồm TOÀN BỘ giao dịch bên dưới, theo ĐÚNG THỨ TỰ. Không tạo giao dịch mới.
 
@@ -286,13 +353,16 @@ Quy tắc bắt buộc:
 - type = "expense" chỉ được chọn hũ: ${categoryPolicy.expenseCategories.join(', ') || '(chưa có hũ chi tiêu)'}.
 - type = "income" chỉ được chọn danh mục: ${categoryPolicy.incomeCategories.join(', ') || '(chưa có danh mục)'}.
 - Không tự tạo danh mục. Nếu yêu cầu không thể áp dụng, giữ nguyên giao dịch đó.
+Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Chỉ đổi ngày nếu nội dung yêu cầu rõ; "hôm nay" là ${today}. Ngày d/M hoặc dd/MM được hiểu là ngày/tháng.
 Lịch sử tham chiếu:
 ${historyContext || 'Chưa có lịch sử.'}
 Mỗi phần tử gồm amount, description, category, merchant, date (YYYY-MM-DD), type ("income" | "expense"). Chỉ trả JSON array hợp lệ.`;
 
   const text = await callGeminiWithFallback([prompt], userId);
+  const explicitDate = resolveMentionedDate(message);
   return parseJsonArrayResponse(text)
     .map((item) => normalizeTransaction(item))
+    .map((item) => explicitDate ? { ...item, date: explicitDate } : item)
     .filter((item) => item.amount > 0);
 }
 
@@ -302,6 +372,7 @@ export async function analyzeExpenseImage(
   userMessage?: string,
   userId?: number,
 ): Promise<ParsedTransaction> {
+  const today = getVietnamToday();
   const prompt = `Phân tích ảnh chụp màn hình giao dịch/chuyển khoản/hóa đơn này và trả về JSON:
 - amount: số tiền (số nguyên dương, KHÔNG có dấu phân cách)
 - description: mô tả ngắn gọn về giao dịch
@@ -313,6 +384,7 @@ export async function analyzeExpenseImage(
 QUAN TRỌNG: Phân biệt rõ:
 - Nếu ảnh hiển thị "NHẬN TIỀN", "+xxx.xxxđ", "Tiền vào", "Chuyển đến bạn" → type = "income"
 - Nếu ảnh hiển thị "CHUYỂN KHOẢN", "-xxx.xxxđ", "Thanh toán", "Chi tiêu" → type = "expense"
+Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Nếu người dùng nói "hôm nay" hoặc ảnh không có ngày thì dùng ${today}. Ngày d/M hoặc dd/MM trong nội dung người dùng được hiểu là ngày/tháng.
 ${userMessage ? 'Ghi chú từ người dùng: ' + userMessage : ''}
 Chỉ trả về JSON hợp lệ, KHÔNG bọc trong markdown.`;
 
@@ -322,12 +394,13 @@ Chỉ trả về JSON hợp lệ, KHÔNG bọc trong markdown.`;
   ], userId);
 
   const parsed = parseJsonResponse(text);
+  const explicitDate = resolveMentionedDate(userMessage || '');
   return {
     amount: Math.abs(Number(parsed.amount)) || 0,
     description: (parsed.description as string) || '',
     category: (parsed.category as string) || 'Khác',
     merchant: (parsed.merchant as string) || '',
-    date: (parsed.date as string) || new Date().toISOString().split('T')[0],
+    date: explicitDate || (isValidIsoDate(parsed.date) ? parsed.date : today),
     type: (parsed.type as string) === 'income' ? 'income' : 'expense',
   };
 }

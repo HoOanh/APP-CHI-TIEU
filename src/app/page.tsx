@@ -82,7 +82,7 @@ export default function DashboardPage() {
   const categoryTotal = categorySpending?.reduce((total, item) => total + Number(item.spent_amount), 0) ?? 0;
 
   return (
-    <div className="mx-auto min-h-screen w-full max-w-[1120px] overflow-x-hidden px-4 pb-nav pt-5 md:px-8 md:py-8 xl:px-10">
+    <div className="mx-auto min-h-screen w-full max-w-[1400px] overflow-x-hidden px-4 pb-nav pt-5 md:px-8 md:py-8 xl:px-10">
       <header className="mb-6 flex items-center justify-between md:mb-8">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#00a970]">Tài chính</p>
@@ -129,7 +129,8 @@ export default function DashboardPage() {
         <span className="truncate">TB chi: <strong className="font-semibold text-slate-700">{summary ? formatCurrency(summary.dailyAverage) : '—'}</strong>/ngày</span>
       </div>
 
-      <section className="mb-7">
+      <div className="grid gap-6 xl:grid-cols-12">
+      <section className="mb-7 xl:col-span-7">
         <SectionTitle title="Giao dịch gần đây" href="/expenses" />
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           {!recent ? (
@@ -153,7 +154,8 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="mb-7">
+      <aside className="space-y-6 xl:col-span-5">
+      <section>
         <SectionTitle title="Chi theo danh mục" href="/settings#thong-ke" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           {categorySpending === null ? <div className="space-y-4">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-9 w-full" />)}</div> : categorySpending.length ? (
@@ -177,8 +179,8 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="mb-4">
-        <SectionTitle title="Theo dõi ngân sách" href="/budgets" />
+      <section>
+        <SectionTitle title="Theo dõi ngân sách" href="/planning" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           {attentionBudgets === null ? <div className="space-y-3">{[1, 2].map((item) => <Skeleton key={item} className="h-8 w-full" />)}</div> : attentionBudgets.length ? attentionBudgets.map((budget) => {
             const progress = getPercentage(budget.spent_amount, budget.budget_amount);
@@ -197,6 +199,8 @@ export default function DashboardPage() {
           )}
         </div>
       </section>
+      </aside>
+      </div>
     </div>
   );
 }

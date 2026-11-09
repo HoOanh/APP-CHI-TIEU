@@ -7,16 +7,15 @@ import { signOut } from 'next-auth/react';
 import {
   CirclePlus,
   ChevronDown,
-  HandCoins,
   Home,
   LogOut,
-  PiggyBank,
   Receipt,
   Settings,
-  Wallet,
+  WalletCards,
 } from 'lucide-react';
 import { BottomNav } from '@/components/BottomNav';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/useToast';
 import { cn, formatCurrency, getCurrentMonth } from '@/lib/utils';
 
@@ -42,8 +41,7 @@ interface BudgetAlertResponse {
 const desktopNavigation = [
   { href: '/', icon: Home, label: 'Tổng quan' },
   { href: '/expenses', icon: Receipt, label: 'Giao dịch' },
-  { href: '/budgets', icon: PiggyBank, label: 'Ngân sách' },
-  { href: '/debts', icon: HandCoins, label: 'Công nợ' },
+  { href: '/planning', icon: WalletCards, label: 'Kế hoạch' },
 ];
 
 function getInitials(name: string) {
@@ -93,62 +91,60 @@ export function AppShell({ children, user }: AppShellProps) {
 
   return (
     <div className="min-h-dvh bg-background">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 border-r border-border/80 bg-white md:flex md:flex-col">
-        <Link href="/" className="flex h-20 items-center gap-3 px-6">
-          <span className="flex size-11 items-center justify-center rounded-2xl bg-primary text-white shadow-lg shadow-emerald-200/70">
-            <Wallet className="size-5" />
-          </span>
-          <span>
-            <span className="block text-base font-bold tracking-tight text-spendee-dark">
-              Chi Tiêu
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              Money Manager
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-20 border-r border-border/80 bg-white md:flex md:flex-col lg:w-64">
+        <Link href="/" aria-label="ARC Irobot, về tổng quan" className="flex h-24 items-center justify-center gap-3 px-2 lg:justify-start lg:px-5">
+          <img src="/arc-irobot.png" alt="ARC Irobot" className="h-auto w-16 shrink-0 object-contain lg:w-[110px]" />
+          <span className="hidden lg:block">
+            <span className="block text-[11px] text-muted-foreground">
+              Quản lý chi tiêu
             </span>
           </span>
         </Link>
 
-        <nav className="flex-1 space-y-1 px-3 py-4">
+        <nav className="flex-1 space-y-1 px-2 py-4 lg:px-3">
           {desktopNavigation.map((item) => {
-            const isActive =
-              pathname === item.href ||
-              (item.href !== '/' && pathname.startsWith(`${item.href}/`));
+            const isPlanningRoute = pathname.startsWith('/planning') || pathname.startsWith('/budgets') || pathname.startsWith('/debts');
+            const isActive = item.href === '/planning'
+              ? isPlanningRoute
+              : pathname === item.href || (item.href !== '/' && pathname.startsWith(`${item.href}/`));
             const Icon = item.icon;
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                aria-label={item.label}
                 className={cn(
-                  'flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors',
+                  'flex h-11 items-center justify-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors lg:justify-start',
                   isActive
                     ? 'bg-emerald-50 text-primary'
                     : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900',
                 )}
               >
                 <Icon className="size-[18px]" strokeWidth={isActive ? 2.4 : 1.8} />
-                {item.label}
+                <span className="hidden lg:inline">{item.label}</span>
               </Link>
             );
           })}
         </nav>
 
-        <div className="p-3">
+        <div className="p-2 lg:p-3">
           <Link
             href="/chat"
-            className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-white shadow-lg shadow-emerald-200 transition hover:bg-[#00a86f]"
+            aria-label="Ghi giao dịch nhanh"
+            className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-primary px-3 text-sm font-semibold text-white shadow-lg shadow-emerald-200 transition hover:bg-[#00a86f] lg:px-4"
           >
             <CirclePlus className="size-5" />
-            Ghi giao dịch nhanh
+            <span className="hidden lg:inline">Ghi giao dịch nhanh</span>
           </Link>
         </div>
 
-        <div className="border-t border-border/80 p-3">
-          <ProfileMenu user={user} />
+        <div className="border-t border-border/80 p-2 lg:p-3">
+          <ProfileMenu user={user} compact />
         </div>
       </aside>
 
-      <div className="md:pl-64">
+      <div className="md:pl-20 lg:pl-64">
         {!isChatRoute && (
           <header className="sticky top-0 z-30 hidden h-16 items-center justify-between border-b border-border/70 bg-background/90 px-6 backdrop-blur-xl md:flex xl:px-10">
             <div>
@@ -188,13 +184,16 @@ function ProfileMenu({
   const displayName = user?.name || 'Người dùng';
 
   return (
-    <details className="group relative">
-      <summary
-        className={cn(
-          'flex cursor-pointer list-none items-center rounded-xl outline-none transition hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-primary/30',
-          compact ? 'gap-2 p-1.5' : 'w-full gap-3 p-2',
-        )}
-      >
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Tài khoản ${displayName}`}
+          className={cn(
+            'flex items-center rounded-xl outline-none transition hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-primary/30',
+            compact ? 'gap-2 p-1.5' : 'w-full gap-3 p-2',
+          )}
+        >
         <Avatar size={compact ? 'default' : 'lg'}>
           {user?.image ? (
             <AvatarImage src={user.image} alt={displayName} />
@@ -211,38 +210,28 @@ function ProfileMenu({
             {user?.email || 'Chưa đăng nhập'}
           </span>
         </span>
-        <ChevronDown className="size-4 text-muted-foreground transition group-open:rotate-180" />
-      </summary>
-
-      <div
-        className={cn(
-          'absolute z-50 w-64 overflow-hidden rounded-2xl border border-border bg-white p-2 shadow-xl',
-          compact ? 'right-0 top-[calc(100%+8px)]' : 'bottom-[calc(100%+8px)] left-0',
-        )}
-      >
+          <ChevronDown className="size-4 text-muted-foreground transition group-data-[state=open]:rotate-180" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side={compact ? 'bottom' : 'top'} align={compact ? 'end' : 'start'} className="w-64 rounded-2xl p-2">
         {user?.isDevelopmentUser && (
           <p className="mx-2 mb-1 rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700">
             Chế độ local development
           </p>
         )}
-        <Link
-          href="/settings"
-          className="flex h-10 items-center gap-2 rounded-xl px-3 text-sm hover:bg-slate-50"
-        >
+        <DropdownMenuItem asChild className="h-10 cursor-pointer rounded-xl px-3">
+          <Link href="/settings" className="flex items-center gap-2 text-sm">
           <Settings className="size-4 text-muted-foreground" />
           Hồ sơ & cài đặt
-        </Link>
+          </Link>
+        </DropdownMenuItem>
         {!user?.isDevelopmentUser && (
-          <button
-            type="button"
-            onClick={() => signOut({ callbackUrl: '/login' })}
-            className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-sm text-destructive hover:bg-rose-50"
-          >
+          <DropdownMenuItem variant="destructive" className="h-10 cursor-pointer rounded-xl px-3" onSelect={() => signOut({ callbackUrl: '/login' })}>
             <LogOut className="size-4" />
             Đăng xuất
-          </button>
+          </DropdownMenuItem>
         )}
-      </div>
-    </details>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

@@ -12,16 +12,36 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
-    const { amount, description, note, category_id, expense_date } = await request.json();
+    const payload = await request.json() as {
+      amount?: unknown;
+      description?: unknown;
+      note?: unknown;
+      category_id?: unknown;
+      expense_date?: unknown;
+      type?: unknown;
+    };
+    const amount = Number(payload.amount);
+    const description = typeof payload.description === 'string' ? payload.description.trim() : '';
+    const categoryId = Number(payload.category_id);
+    const expenseDate = payload.expense_date;
+    const type = payload.type === 'income' ? 'income' : 'expense';
+    if (!Number.isFinite(amount) || amount <= 0 || !description || description.length > 160 || !Number.isInteger(categoryId) || categoryId <= 0 || !isValidDate(expenseDate) || (payload.type !== 'income' && payload.type !== 'expense')) {
+      return NextResponse.json({ error: 'Thông tin giao dịch chưa hợp lệ.' }, { status: 400 });
+    }
     
     const db = await getDb();
+    const category = await db.execute({
+      sql: 'SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
+      args: [categoryId, user.id],
+    });
+    if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
     await db.execute({
       sql: `
         UPDATE expenses 
-        SET amount = ?, description = ?, note = ?, category_id = ?, expense_date = ? 
+        SET amount = ?, description = ?, note = ?, category_id = ?, expense_date = ?, type = ?
         WHERE id = ? AND user_id = ?
       `,
-      args: [amount, description, note, category_id, expense_date, id, user.id]
+      args: [amount, description, typeof payload.note === 'string' ? payload.note.trim() : '', categoryId, expenseDate, type, id, user.id]
     });
     
     const updated = await db.execute({
@@ -43,6 +63,12 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to update expense' }, { status: 500 });
   }
+}
+
+function isValidDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {

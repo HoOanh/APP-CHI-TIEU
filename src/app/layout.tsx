@@ -6,16 +6,20 @@ import { AppShell } from "@/components/AppShell";
 import { getCurrentUser } from "@/lib/current-user";
 
 export const metadata: Metadata = {
-  title: "Chi Tiêu Manager",
-  description: "Quản lý chi tiêu thông minh với AI",
+  applicationName: "ARC Irobot",
+  title: "ARC Irobot · Quản lý chi tiêu",
+  description: "Quản lý chi tiêu và ngân sách cá nhân",
+  icons: {
+    icon: "/arc-irobot.png",
+    shortcut: "/arc-irobot.png",
+    apple: "/arc-irobot.png",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: "#F7F9FB",
+  themeColor: "#F1F5F9",
 };
 
 export default async function RootLayout({

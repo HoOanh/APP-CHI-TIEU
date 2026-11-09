@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { getCurrentMonth, getVietnamToday } from '@/lib/utils';
 
 function getMonthRange(month: string) {
   const [year, value] = month.split('-').map(Number);
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const month = request.nextUrl.searchParams.get('month') ?? new Date().toISOString().slice(0, 7);
+  const month = request.nextUrl.searchParams.get('month') ?? getCurrentMonth();
   const { start, end } = getMonthRange(month);
 
   try {
@@ -65,9 +66,9 @@ export async function GET(request: NextRequest) {
     const row = summaryResult.rows[0];
     const expense = Number(row?.expense) || 0;
     const days = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
-    const today = new Date();
-    const isCurrentMonth = month === today.toISOString().slice(0, 7);
-    const daysLeft = isCurrentMonth ? Math.max(1, days - today.getDate() + 1) : 0;
+    const today = getVietnamToday();
+    const isCurrentMonth = month === today.slice(0, 7);
+    const daysLeft = isCurrentMonth ? Math.max(1, days - Number(today.slice(8, 10)) + 1) : 0;
     const attentionBudgets = alertsResult.rows.reduce<Array<{
       id: string;
       budget_amount: number;

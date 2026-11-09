@@ -16,6 +16,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn, formatCurrency, formatShortDate } from '@/lib/utils';
 import { useToast } from '@/hooks/useToast';
+import { ManualTransactionDialog } from '@/components/ManualTransactionDialog';
+import { DatePicker } from '@/components/ui/date-picker';
 
 interface Message {
   id: string;
@@ -190,6 +192,15 @@ export default function ChatPage() {
     }
   };
 
+  const updateTransactionDate = (messageId: string, transactionIndex: number, date: string) => {
+    setMessages((current) => current.map((item) => item.id === messageId ? {
+      ...item,
+      transactions: item.transactions?.map((transaction, index) => index === transactionIndex
+        ? { ...transaction, expense_date: date }
+        : transaction),
+    } : item));
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
@@ -198,8 +209,9 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex h-dvh w-full max-w-4xl flex-col overflow-hidden bg-[#f7f9fb] md:mx-auto md:border-x md:border-slate-200">
-      <header className="flex h-16 shrink-0 items-center border-b border-slate-200 bg-white px-4">
+    <div className="flex h-dvh w-full max-w-6xl flex-col overflow-hidden bg-[#f7f9fb] md:mx-auto md:border-x md:border-slate-200">
+      <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
+        <div className="flex min-w-0 items-center">
         <Link href="/" aria-label="Quay lại" className="mr-3 flex size-9 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100">
           <ArrowLeft className="size-5" />
         </Link>
@@ -207,6 +219,8 @@ export default function ChatPage() {
           <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-slate-800">Ghi giao dịch</h1>
           <p className="mt-0.5 text-xs text-slate-400">Nhập nhanh hoặc gửi ảnh hoá đơn</p>
         </div>
+        </div>
+        <ManualTransactionDialog compact />
       </header>
 
       <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
@@ -215,7 +229,7 @@ export default function ChatPage() {
         ) : (
           <div className="mx-auto max-w-2xl space-y-4">
             {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} isLoading={isLoading} onConfirm={confirmExpense} />
+              <MessageBubble key={message.id} message={message} isLoading={isLoading} onConfirm={confirmExpense} onDateChange={updateTransactionDate} />
             ))}
             {isLoading ? <ThinkingBubble /> : null}
           </div>
@@ -294,20 +308,20 @@ function EmptyState({ onPrompt, onImage }: { onPrompt: (value: string) => void; 
   );
 }
 
-function MessageBubble({ message, isLoading, onConfirm }: { message: Message; isLoading: boolean; onConfirm: (messageId: string, transactionIndex: number) => void }) {
+function MessageBubble({ message, isLoading, onConfirm, onDateChange }: { message: Message; isLoading: boolean; onConfirm: (messageId: string, transactionIndex: number) => void; onDateChange: (messageId: string, transactionIndex: number, date: string) => void }) {
   const isUser = message.role === 'user';
   return (
     <div className={cn('flex flex-col', isUser ? 'items-end' : 'items-start')}>
       <div className={cn('max-w-[90%] rounded-2xl px-3.5 py-3 text-sm leading-5 shadow-sm', isUser ? 'rounded-br-md bg-[#00bc7c] text-white' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700')}>
         {message.images?.length ? <div className="mb-2 grid grid-cols-2 gap-1.5">{message.images.map((image, index) => <Image key={image} src={image} alt={`Ảnh giao dịch ${index + 1}`} width={240} height={160} unoptimized className="h-28 w-full rounded-xl object-cover" />)}</div> : null}
         {message.content ? <p className="whitespace-pre-wrap">{message.content}</p> : null}
-        {message.transactions?.map((transaction, transactionIndex) => <TransactionCard key={`${message.id}-${transactionIndex}`} transaction={transaction} isLoading={isLoading} onConfirm={() => onConfirm(message.id, transactionIndex)} />)}
+        {message.transactions?.map((transaction, transactionIndex) => <TransactionCard key={`${message.id}-${transactionIndex}`} transaction={transaction} isLoading={isLoading} onConfirm={() => onConfirm(message.id, transactionIndex)} onDateChange={(date) => onDateChange(message.id, transactionIndex, date)} />)}
       </div>
     </div>
   );
 }
 
-function TransactionCard({ transaction, isLoading, onConfirm }: { transaction: TransactionDraft; isLoading: boolean; onConfirm: () => void }) {
+function TransactionCard({ transaction, isLoading, onConfirm, onDateChange }: { transaction: TransactionDraft; isLoading: boolean; onConfirm: () => void; onDateChange: (date: string) => void }) {
   const isIncome = transaction.type === 'income';
   return (
     <div className="mt-3 rounded-xl border border-slate-200 bg-[#fbfcfc] p-3 text-slate-700">
@@ -315,7 +329,8 @@ function TransactionCard({ transaction, isLoading, onConfirm }: { transaction: T
         <div className="min-w-0"><p className={cn('text-lg font-semibold tabular-nums', isIncome ? 'text-[#00a970]' : 'text-[#f15b64]')}>{isIncome ? '+' : '−'}{formatCurrency(transaction.amount)}</p><p className="mt-1 truncate text-sm font-medium">{transaction.description}</p></div>
         <Badge variant="outline" className={cn('shrink-0', transaction.confirmed ? 'border-emerald-100 bg-emerald-50 text-[#00a970]' : 'border-slate-200 bg-white text-slate-500')}><CheckCircle2 className="size-3" />{transaction.confirmed ? 'Đã lưu' : 'Chờ lưu'}</Badge>
       </div>
-      <p className="mt-2 text-xs text-slate-400">{transaction.category_name} · {formatShortDate(transaction.expense_date)}{transaction.merchant ? ` · ${transaction.merchant}` : ''}</p>
+      <p className="mt-2 text-xs text-slate-400">{transaction.category_name}{transaction.merchant ? ` · ${transaction.merchant}` : ''}</p>
+      {!transaction.confirmed ? <div className="mt-2"><DatePicker label="Ngày giao dịch" value={transaction.expense_date} onChange={onDateChange} className="h-9" /></div> : <p className="mt-2 text-xs text-slate-400">{formatShortDate(transaction.expense_date)}</p>}
       <p className="mt-1 text-[11px] font-medium text-[#00a970]">{transaction.category_source === 'budget_jar' ? 'Khớp theo hũ chi tiêu' : 'Khớp theo danh mục thu nhập'}</p>
       {!transaction.confirmed ? <Button onClick={onConfirm} disabled={isLoading} className="mt-3 h-9 w-full rounded-lg bg-[#00bc7c] text-xs hover:bg-[#00a970]">Xác nhận và lưu</Button> : null}
     </div>

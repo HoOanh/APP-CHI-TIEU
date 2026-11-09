@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+import { getVietnamToday } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,7 +15,7 @@ export async function GET(request: NextRequest) {
 
     const db = await getDb();
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getVietnamToday();
     const todayDate = new Date(today);
     const dayOfWeek = todayDate.getDay();
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
@@ -166,30 +167,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { category_id, month, budget_amount, warning_percent, daily_limit, frequency_limit, frequency_period } = await request.json();
+    const body: unknown = await request.json();
+    if (!isRecord(body)) return NextResponse.json({ error: 'Dữ liệu ngân sách không hợp lệ.' }, { status: 400 });
+    const categoryId = Number(body.category_id);
+    const month = typeof body.month === 'string' ? body.month : '';
+    const budgetBasis = body.budget_basis === 'daily' ? 'daily' : 'monthly';
+    const budgetDays = Number(body.budget_days);
+    const dailyAmount = Number(body.daily_amount);
+    const monthlyAmount = Number(body.budget_amount);
+    const monthDays = getDaysInMonth(month);
+    const budgetAmount = budgetBasis === 'daily' ? dailyAmount * budgetDays : monthlyAmount;
+    const warningPercent = Math.min(100, Math.max(1, Number(body.warning_percent) || 80));
+    const dailyLimit = Math.max(0, Number(body.daily_limit) || 0);
+    const frequencyLimit = Math.max(0, Number(body.frequency_limit) || 0);
+    const frequencyPeriod = typeof body.frequency_period === 'string' ? body.frequency_period : '';
+    if (!Number.isInteger(categoryId) || categoryId <= 0 || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !Number.isFinite(budgetAmount) || budgetAmount <= 0 || (budgetBasis === 'daily' && (!Number.isFinite(dailyAmount) || dailyAmount <= 0 || !Number.isInteger(budgetDays) || budgetDays < 1 || budgetDays > monthDays))) {
+      return NextResponse.json({ error: 'Kiểm tra danh mục, tháng, số tiền và số ngày ngân sách.' }, { status: 400 });
+    }
     const db = await getDb();
+    const category = await db.execute({
+      sql: "SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?) AND name <> 'Thu nhập'",
+      args: [categoryId, user.id],
+    });
+    if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục chi tiêu không hợp lệ.' }, { status: 400 });
     
     const existingResult = await db.execute({
       sql: 'SELECT id FROM budget_jars WHERE user_id = ? AND category_id = ? AND month = ?',
-      args: [user.id, category_id, month],
+      args: [user.id, categoryId, month],
     });
     
     if (existingResult.rows.length > 0) {
       const existingId = existingResult.rows[0].id;
       await db.execute({ 
-        sql: 'UPDATE budget_jars SET budget_amount = ?, warning_percent = ?, daily_limit = ?, frequency_limit = ?, frequency_period = ? WHERE id = ? AND user_id = ?', 
-        args: [budget_amount, warning_percent, daily_limit || 0, frequency_limit || 0, frequency_period || '', existingId, user.id] 
+        sql: 'UPDATE budget_jars SET budget_amount = ?, budget_basis = ?, daily_amount = ?, budget_days = ?, warning_percent = ?, daily_limit = ?, frequency_limit = ?, frequency_period = ? WHERE id = ? AND user_id = ?',
+        args: [budgetAmount, budgetBasis, budgetBasis === 'daily' ? dailyAmount : 0, budgetBasis === 'daily' ? budgetDays : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod, existingId, user.id]
       });
-      return NextResponse.json({ id: existingId, category_id, month, budget_amount, warning_percent, daily_limit, frequency_limit, frequency_period });
+      return NextResponse.json({ id: existingId, category_id: categoryId, month, budget_amount: budgetAmount, budget_basis: budgetBasis, daily_amount: budgetBasis === 'daily' ? dailyAmount : 0, budget_days: budgetBasis === 'daily' ? budgetDays : 0, warning_percent: warningPercent, daily_limit: dailyLimit, frequency_limit: frequencyLimit, frequency_period: frequencyPeriod });
     } else {
       const info = await db.execute({ 
-        sql: 'INSERT INTO budget_jars (user_id, category_id, month, budget_amount, warning_percent, daily_limit, frequency_limit, frequency_period) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 
-        args: [user.id, category_id, month, budget_amount, warning_percent, daily_limit || 0, frequency_limit || 0, frequency_period || ''] 
+        sql: 'INSERT INTO budget_jars (user_id, category_id, month, budget_amount, budget_basis, daily_amount, budget_days, warning_percent, daily_limit, frequency_limit, frequency_period) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [user.id, categoryId, month, budgetAmount, budgetBasis, budgetBasis === 'daily' ? dailyAmount : 0, budgetBasis === 'daily' ? budgetDays : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod]
       });
-      return NextResponse.json({ id: Number(info.lastInsertRowid), category_id, month, budget_amount, warning_percent, daily_limit, frequency_limit, frequency_period }, { status: 201 });
+      return NextResponse.json({ id: Number(info.lastInsertRowid), category_id: categoryId, month, budget_amount: budgetAmount, budget_basis: budgetBasis, daily_amount: budgetBasis === 'daily' ? dailyAmount : 0, budget_days: budgetBasis === 'daily' ? budgetDays : 0, warning_percent: warningPercent, daily_limit: dailyLimit, frequency_limit: frequencyLimit, frequency_period: frequencyPeriod }, { status: 201 });
     }
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to save budget' }, { status: 500 });
   }
+}
+
+function getDaysInMonth(month: string) {
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return 0;
+  return new Date(Number(match[1]), Number(match[2]), 0).getDate();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

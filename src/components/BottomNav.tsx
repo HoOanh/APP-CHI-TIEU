@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { href: '/', icon: Home, label: 'Tổng quan' },
   { href: '/expenses', icon: ReceiptText, label: 'Giao dịch' },
-  { href: '/budgets', icon: WalletCards, label: 'Ngân sách' },
+  { href: '/planning', icon: WalletCards, label: 'Kế hoạch' },
   { href: '/settings', icon: UserRound, label: 'Tài khoản' },
 ];
 
@@ -29,7 +29,7 @@ export function BottomNav({ user }: { user: BottomNavUser | null }) {
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 pb-safe backdrop-blur-xl md:hidden">
-      <div className="mx-auto grid h-[68px] max-w-lg grid-cols-5 items-end px-2">
+      <div className="mx-auto grid h-[68px] max-w-lg grid-cols-5 items-end px-1">
         {leftItems.map((item) => (
           <NavItem key={item.href} item={item} pathname={pathname} />
         ))}
@@ -52,7 +52,8 @@ export function BottomNav({ user }: { user: BottomNavUser | null }) {
 }
 
 function AccountNavItem({ item, pathname, user }: { item: (typeof navItems)[number]; pathname: string; user: BottomNavUser | null }) {
-  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  const isPlanningRoute = pathname.startsWith('/planning') || pathname.startsWith('/budgets') || pathname.startsWith('/debts');
+  const isActive = item.href === '/planning' ? isPlanningRoute : pathname === item.href || pathname.startsWith(`${item.href}/`);
   const displayName = user?.name || 'Người dùng';
   return <Link href={item.href} className={cn('flex h-full min-w-0 flex-col items-center justify-center gap-1 pb-1.5 transition-colors', isActive ? 'text-[#00bc7c]' : 'text-slate-400')}>
     <Avatar size="sm" className="size-6">
@@ -70,7 +71,8 @@ function NavItem({
   item: (typeof navItems)[number];
   pathname: string;
 }) {
-  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+  const isPlanningRoute = pathname.startsWith('/planning') || pathname.startsWith('/budgets') || pathname.startsWith('/debts');
+  const isActive = item.href === '/planning' ? isPlanningRoute : pathname === item.href || pathname.startsWith(`${item.href}/`);
   const Icon = item.icon;
   return (
     <Link

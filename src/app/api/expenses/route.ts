@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+import { getVietnamToday } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -64,15 +65,19 @@ export async function POST(request: NextRequest) {
     }
 
     const { amount, description, note, category_id, expense_date, date, type = 'expense' } = await request.json();
-    const finalDate = expense_date || date || new Date().toISOString().split('T')[0];
+    const finalDate = expense_date || date || getVietnamToday();
     const numericAmount = Number(amount);
+    const normalizedDescription = typeof description === 'string' ? description.trim() : '';
+    const normalizedCategoryId = Number(category_id);
+    const normalizedType = type === 'income' ? 'income' : 'expense';
 
     if (
       !Number.isFinite(numericAmount) ||
       numericAmount <= 0 ||
-      !description ||
-      !category_id ||
-      !['income', 'expense'].includes(type)
+      !normalizedDescription ||
+      !Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0 ||
+      !['income', 'expense'].includes(type) ||
+      !isValidDate(finalDate)
     ) {
       return NextResponse.json(
         { error: 'Invalid transaction data' },
@@ -81,12 +86,20 @@ export async function POST(request: NextRequest) {
     }
     
     const db = await getDb();
+    const categoryResult = await db.execute({
+      sql: 'SELECT id, name FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
+      args: [normalizedCategoryId, user.id],
+    });
+    const category = categoryResult.rows[0];
+    if (!category) {
+      return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+    }
     const info = await db.execute({
       sql: `
         INSERT INTO expenses (user_id, amount, description, note, category_id, expense_date, type) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
-      args: [user.id, numericAmount, description, note || '', category_id, finalDate, type]
+      args: [user.id, numericAmount, normalizedDescription, typeof note === 'string' ? note.trim() : '', normalizedCategoryId, finalDate, normalizedType]
     });
     
     const newExpense = await db.execute({
@@ -99,11 +112,11 @@ export async function POST(request: NextRequest) {
       args: [info.lastInsertRowid!, user.id]
     });
 
-    const budgetAlert = type === 'expense'
+    const budgetAlert = normalizedType === 'expense'
       ? await getBudgetAlert({
         db,
         userId: user.id,
-        categoryId: category_id,
+        categoryId: normalizedCategoryId,
         expenseDate: finalDate,
         addedAmount: numericAmount,
       })
@@ -117,6 +130,12 @@ export async function POST(request: NextRequest) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to create expense' }, { status: 500 });
   }
+}
+
+function isValidDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 type Database = Awaited<ReturnType<typeof getDb>>;

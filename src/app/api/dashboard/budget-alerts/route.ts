@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { getCurrentMonth } from '@/lib/utils';
 
 function getMonthRange(month: string) {
   const [year, value] = month.split('-').map(Number);
@@ -11,7 +12,7 @@ function getMonthRange(month: string) {
 export async function GET(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const month = request.nextUrl.searchParams.get('month') ?? new Date().toISOString().slice(0, 7);
+  const month = request.nextUrl.searchParams.get('month') ?? getCurrentMonth();
   const { start, end } = getMonthRange(month);
   try {
     const db = await getDb();
