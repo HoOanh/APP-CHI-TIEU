@@ -136,6 +136,10 @@ async function callGeminiWithFallback(
   throw new Error(`Tất cả models và API keys đều thất bại:\n${errors.join('\n')}`);
 }
 
+export async function generateTextWithConfiguredAi(userId: number, prompt: string) {
+  return callGeminiWithFallback([prompt], userId);
+}
+
 function parseJsonResponse(text: string): Record<string, unknown> {
   const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
   try {

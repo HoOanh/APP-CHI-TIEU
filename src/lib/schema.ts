@@ -30,6 +30,7 @@ export async function initializeDatabase(db: Client) {
       category_id INTEGER NOT NULL,
       expense_date TEXT NOT NULL,
       type TEXT NOT NULL DEFAULT 'expense',
+      client_request_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (category_id) REFERENCES categories(id)
@@ -135,9 +136,46 @@ export async function initializeDatabase(db: Client) {
       FOREIGN KEY (provider_id) REFERENCES ai_providers(id) ON DELETE CASCADE,
       UNIQUE(provider_id, model_id)
     );
+
+    CREATE TABLE IF NOT EXISTS pwa_push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_insights (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      period TEXT NOT NULL,
+      period_start TEXT NOT NULL,
+      period_end TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, period, period_start),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_deliveries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      occurrence_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      sent_at TEXT,
+      last_error TEXT DEFAULT '',
+      UNIQUE(user_id, kind, occurrence_key),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 
   await migrateLegacyTables(db);
+  await addColumnIfMissing(db, 'expenses', 'client_request_id', 'TEXT');
   await addColumnIfMissing(db, 'budget_jars', 'budget_basis', "TEXT NOT NULL DEFAULT 'monthly'");
   await addColumnIfMissing(db, 'budget_jars', 'daily_amount', 'REAL NOT NULL DEFAULT 0');
   await addColumnIfMissing(db, 'budget_jars', 'budget_days', 'INTEGER NOT NULL DEFAULT 0');
@@ -159,6 +197,14 @@ export async function initializeDatabase(db: Client) {
       ON ai_providers(user_id, enabled);
     CREATE INDEX IF NOT EXISTS idx_ai_models_user_provider
       ON ai_models(user_id, provider_id, enabled, position);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_user_client_request
+      ON expenses(user_id, client_request_id) WHERE client_request_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_pwa_push_user
+      ON pwa_push_subscriptions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_insights_user_created
+      ON ai_insights(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status
+      ON notification_deliveries(status, created_at);
   `);
 
   // Insert default categories

@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+import { getVietnamToday } from '@/lib/utils';
+import { z } from 'zod';
+
+const paymentSchema = z.object({
+  amount: z.coerce.number().finite().positive(),
+  payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  note: z.string().max(500).optional(),
+});
 
 interface RouteContext { params: Promise<{ id: string }> }
 
@@ -29,7 +37,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
-    const { amount, payment_date, note } = await request.json();
+    const parsed = paymentSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Số tiền hoặc ngày thanh toán không hợp lệ' }, { status: 400 });
+    }
+    const { amount, payment_date, note } = parsed.data;
     const db = await getDb();
 
     const ownedDebt = await db.execute({
@@ -42,7 +54,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     
     const tx = await db.transaction('write');
     
-    await tx.execute({ sql: 'INSERT INTO debt_payments (user_id, debt_id, amount, payment_date, note) VALUES (?, ?, ?, ?, ?)', args: [user.id, id, amount, payment_date, note || ''] });
+    await tx.execute({ sql: 'INSERT INTO debt_payments (user_id, debt_id, amount, payment_date, note) VALUES (?, ?, ?, ?, ?)', args: [user.id, id, amount, payment_date || getVietnamToday(), note || ''] });
     
     const debtRes = await tx.execute({ sql: 'SELECT total_amount FROM debts WHERE id = ? AND user_id = ?', args: [id, user.id] });
     const paidRes = await tx.execute({ sql: 'SELECT SUM(amount) as sum FROM debt_payments WHERE debt_id = ? AND user_id = ?', args: [id, user.id] });

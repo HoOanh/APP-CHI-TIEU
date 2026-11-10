@@ -180,6 +180,9 @@ export async function POST(request: NextRequest) {
       const debtNames = debts.map(d => d.name as string);
 
       const parsed = await parseDebtPayment(message, debtNames, user.id);
+      if (!parsed.debt_name || !Number.isFinite(parsed.amount) || parsed.amount <= 0) {
+        return NextResponse.json({ error: 'Không nhận diện được khoản nợ hoặc số tiền trả. Vui lòng nhập rõ khoản nợ và số tiền.' }, { status: 422 });
+      }
       
       const matchedDebt = debts.find(d => {
          const name = d.name as string;

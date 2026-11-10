@@ -15,6 +15,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/useToast';
 import { formatMoneyInput, getVietnamToday, parseMoneyInput } from '@/lib/utils';
+import { queueOfflineTransaction } from '@/lib/offline-queue';
 
 interface CategoryOption {
   id: string | number;
@@ -100,18 +101,55 @@ export function ManualTransactionDialog({ onSaved, compact = false, transaction 
   }
 
   async function saveTransaction(values: TransactionFormValues) {
-    const response = await fetch(transaction ? `/api/expenses/${transaction.id}` : '/api/expenses', {
-      method: transaction ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        amount: parseMoneyInput(values.amount),
-        description: values.description.trim(),
-        category_id: activeCategoryId,
-        expense_date: values.expense_date,
-        note: values.note.trim(),
-        type: values.type,
-      }),
-    });
+    const transactionValues = {
+      amount: parseMoneyInput(values.amount),
+      description: values.description.trim(),
+      category_id: activeCategoryId,
+      expense_date: values.expense_date,
+      note: values.note.trim(),
+      type: values.type,
+    };
+
+    if (!navigator.onLine) {
+      if (transaction) {
+        showToast('Chỉnh sửa giao dịch cần kết nối mạng.', 'error');
+        return;
+      }
+      try {
+        await queueOfflineTransaction(transactionValues);
+        setOpen(false);
+        resetForm();
+        onSaved?.();
+        showToast('Đã lưu giao dịch trên thiết bị', 'success', 'Giao dịch sẽ tự đồng bộ khi có mạng.');
+      } catch {
+        showToast('Không thể lưu giao dịch offline trên thiết bị này.', 'error');
+      }
+      return;
+    }
+
+    const clientRequestId = transaction ? undefined : crypto.randomUUID();
+    let response: Response;
+    try {
+      response = await fetch(transaction ? `/api/expenses/${transaction.id}` : '/api/expenses', {
+        method: transaction ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...transactionValues,
+          ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+        }),
+      });
+    } catch {
+      if (!transaction && clientRequestId) {
+        await queueOfflineTransaction(transactionValues, clientRequestId);
+        setOpen(false);
+        resetForm();
+        onSaved?.();
+        showToast('Mất kết nối; đã lưu giao dịch trên thiết bị', 'success', 'Giao dịch sẽ tự đồng bộ khi có mạng.');
+      } else {
+        showToast('Mất kết nối; chưa thể cập nhật giao dịch.', 'error');
+      }
+      return;
+    }
     const result = await response.json() as { error?: string; budgetAlert?: { title: string; message: string; severity: 'warning' | 'danger' } };
     if (!response.ok) {
       showToast(result.error || 'Không thể lưu giao dịch.', 'error');

@@ -17,6 +17,7 @@ import { BottomNav } from '@/components/BottomNav';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/useToast';
+import { syncOfflineTransactions } from '@/lib/offline-queue';
 import { cn, formatCurrency, getCurrentMonth } from '@/lib/utils';
 
 interface AppShellUser {
@@ -83,6 +84,32 @@ export function AppShell({ children, user }: AppShellProps) {
     };
 
     void notifyBudgetStatus();
+  }, [isPublicRoute, showToast, user]);
+
+  useEffect(() => {
+    if (!user || isPublicRoute) return;
+
+    const syncPendingTransactions = async () => {
+      const result = await syncOfflineTransactions().catch(() => ({ synced: 0, failed: 0 }));
+      if (result.synced > 0) {
+        showToast(
+          `Đã đồng bộ ${result.synced} giao dịch offline`,
+          'success',
+          result.failed > 0 ? `${result.failed} giao dịch còn chờ thử lại.` : undefined,
+        );
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void syncPendingTransactions();
+    };
+
+    void syncPendingTransactions();
+    window.addEventListener('online', syncPendingTransactions);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('online', syncPendingTransactions);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [isPublicRoute, showToast, user]);
 
   if (isPublicRoute) {

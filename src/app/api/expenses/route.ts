@@ -64,12 +64,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { amount, description, note, category_id, expense_date, date, type = 'expense' } = await request.json();
+    const { amount, description, note, category_id, expense_date, date, type = 'expense', client_request_id } = await request.json();
     const finalDate = expense_date || date || getVietnamToday();
     const numericAmount = Number(amount);
     const normalizedDescription = typeof description === 'string' ? description.trim() : '';
     const normalizedCategoryId = Number(category_id);
     const normalizedType = type === 'income' ? 'income' : 'expense';
+    const clientRequestId = typeof client_request_id === 'string'
+      && /^[A-Za-z0-9_-]{8,120}$/.test(client_request_id)
+      ? client_request_id
+      : null;
 
     if (
       !Number.isFinite(numericAmount) ||
@@ -94,25 +98,34 @@ export async function POST(request: NextRequest) {
     if (!category) {
       return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
     }
-    const info = await db.execute({
+    const insertResult = await db.execute({
       sql: `
-        INSERT INTO expenses (user_id, amount, description, note, category_id, expense_date, type) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO expenses
+          (user_id, amount, description, note, category_id, expense_date, type, client_request_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
-      args: [user.id, numericAmount, normalizedDescription, typeof note === 'string' ? note.trim() : '', normalizedCategoryId, finalDate, normalizedType]
+      args: [user.id, numericAmount, normalizedDescription, typeof note === 'string' ? note.trim() : '', normalizedCategoryId, finalDate, normalizedType, clientRequestId]
     });
+
+    const wasInserted = Number(insertResult.rowsAffected) > 0;
     
     const newExpense = await db.execute({
       sql: `
         SELECT e.id, e.amount, e.description, e.note, e.category_id, e.expense_date, e.type, e.created_at, c.name as category_name, c.icon as category_icon, c.color as category_color 
         FROM expenses e 
         LEFT JOIN categories c ON e.category_id = c.id 
-        WHERE e.id = ? AND e.user_id = ?
+        WHERE e.user_id = ? AND ${clientRequestId ? 'e.client_request_id = ?' : 'e.id = ?'}
       `,
-      args: [info.lastInsertRowid!, user.id]
+      args: clientRequestId
+        ? [user.id, clientRequestId]
+        : [user.id, insertResult.lastInsertRowid!]
     });
 
-    const budgetAlert = normalizedType === 'expense'
+    if (!newExpense.rows[0]) {
+      return NextResponse.json({ error: 'Không thể xác nhận giao dịch đã lưu.' }, { status: 500 });
+    }
+
+    const budgetAlert = wasInserted && normalizedType === 'expense'
       ? await getBudgetAlert({
         db,
         userId: user.id,
@@ -125,7 +138,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ...newExpense.rows[0],
       budgetAlert,
-    }, { status: 201 });
+    }, { status: wasInserted ? 201 : 200 });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to create expense' }, { status: 500 });

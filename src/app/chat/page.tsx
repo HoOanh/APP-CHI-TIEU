@@ -18,6 +18,14 @@ import { cn, formatCurrency, formatShortDate } from '@/lib/utils';
 import { useToast } from '@/hooks/useToast';
 import { ManualTransactionDialog } from '@/components/ManualTransactionDialog';
 import { DatePicker } from '@/components/ui/date-picker';
+import {
+  listOfflineQueue,
+  onOfflineQueueChange,
+  queueOfflineAiNote,
+  removeOfflineQueueEntry,
+  type OfflineQueueEntry,
+  type QueuedAiNote,
+} from '@/lib/offline-queue';
 
 interface Message {
   id: string;
@@ -25,6 +33,17 @@ interface Message {
   content: string;
   images?: string[];
   transactions?: TransactionDraft[];
+  offlineNoteId?: string;
+}
+
+interface QuickSuggestion {
+  label: string;
+  amount: number;
+  amountText: string;
+  categoryName: string;
+  categoryColor: string;
+  type: 'expense' | 'income';
+  prompt: string;
 }
 
 interface TransactionDraft {
@@ -65,6 +84,9 @@ export default function ChatPage() {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<QuickSuggestion[]>([]);
+  const [offlineEntries, setOfflineEntries] = useState<OfflineQueueEntry[]>([]);
+  const [activeOfflineNoteId, setActiveOfflineNoteId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { showToast } = useToast();
@@ -73,6 +95,26 @@ export default function ChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  useEffect(() => {
+    const refreshQueue = () => {
+      void listOfflineQueue().then(setOfflineEntries).catch(() => setOfflineEntries([]));
+    };
+    refreshQueue();
+    const removeListener = onOfflineQueueChange(refreshQueue);
+    const handleFocus = () => refreshQueue();
+    window.addEventListener('online', handleFocus);
+    window.addEventListener('focus', handleFocus);
+    fetch('/api/expenses/suggestions')
+      .then(async (response) => response.ok ? await response.json() as QuickSuggestion[] : [])
+      .then(setSuggestions)
+      .catch(() => setSuggestions([]));
+    return () => {
+      removeListener();
+      window.removeEventListener('online', handleFocus);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   const appendFiles = (files: File[]) => {
     const accepted = files.slice(0, Math.max(0, 8 - imageFiles.length));
@@ -108,6 +150,22 @@ export default function ChatPage() {
     const currentInput = input.trim();
     const currentImageFiles = imageFiles;
     const currentImagePreviews = imagePreviews;
+    const offlineNoteId = activeOfflineNoteId;
+    if (!navigator.onLine) {
+      if (currentImageFiles.length) {
+        showToast('Ảnh cần mạng để phân tích. Ghi chú chữ vẫn lưu được offline.', 'warning');
+        return;
+      }
+      try {
+        await queueOfflineAiNote(currentInput);
+        setInput('');
+        setActiveOfflineNoteId(null);
+        showToast('Đã lưu ghi chú trên thiết bị', 'success', 'Kết nối lại để AI phân tích ghi chú này.');
+      } catch {
+        showToast('Không thể lưu ghi chú offline trên thiết bị này.', 'error');
+      }
+      return;
+    }
     setMessages((current) => [...current, {
       id: crypto.randomUUID(), role: 'user', content: currentInput, images: currentImagePreviews,
     }]);
@@ -148,7 +206,9 @@ export default function ChatPage() {
         role: 'assistant',
         content: `Đã tìm thấy ${transactions.length} giao dịch. Kiểm tra lại trước khi lưu nhé.`,
         transactions,
+        offlineNoteId: offlineNoteId || undefined,
       }]);
+      setActiveOfflineNoteId(null);
     } catch (error) {
       console.error(error);
       const errorMessage = error instanceof Error ? error.message : 'Không thể xử lý yêu cầu, vui lòng thử lại.';
@@ -162,7 +222,8 @@ export default function ChatPage() {
   };
 
   const confirmExpense = async (messageId: string, transactionIndex: number) => {
-    const transaction = messages.find((item) => item.id === messageId)?.transactions?.[transactionIndex];
+    const sourceMessage = messages.find((item) => item.id === messageId);
+    const transaction = sourceMessage?.transactions?.[transactionIndex];
     if (!transaction || transaction.confirmed) return;
     setIsLoading(true);
     try {
@@ -183,6 +244,11 @@ export default function ChatPage() {
         );
       } else {
         showToast('Đã lưu giao dịch', 'success');
+      }
+      const allTransactionsSaved = sourceMessage?.transactions?.every((draft, index) => draft.confirmed || index === transactionIndex);
+      if (sourceMessage?.offlineNoteId && allTransactionsSaved) {
+        await removeOfflineQueueEntry(sourceMessage.offlineNoteId);
+        setOfflineEntries(await listOfflineQueue());
       }
     } catch (error) {
       console.error(error);
@@ -224,8 +290,15 @@ export default function ChatPage() {
       </header>
 
       <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
+        <OfflineNotesPanel
+          entries={offlineEntries}
+          activeId={activeOfflineNoteId}
+          isOnline={typeof navigator !== 'undefined' && navigator.onLine}
+          onUse={(entry) => { setInput(entry.message); setActiveOfflineNoteId(entry.id); }}
+          onDelete={async (entry) => { await removeOfflineQueueEntry(entry.id); setOfflineEntries(await listOfflineQueue()); }}
+        />
         {messages.length === 0 ? (
-          <EmptyState onPrompt={setInput} onImage={() => fileInputRef.current?.click()} />
+          <EmptyState suggestions={suggestions} onPrompt={setInput} onImage={() => fileInputRef.current?.click()} />
         ) : (
           <div className="mx-auto max-w-2xl space-y-4">
             {messages.map((message) => (
@@ -290,7 +363,7 @@ function looksLikeCorrection(message: string): boolean {
   return /\b(sửa|chỉnh|đổi|cập nhật|giao dịch|món (đầu|cuối)|thứ \d+|đầu tiên|cuối cùng)\b/i.test(message);
 }
 
-function EmptyState({ onPrompt, onImage }: { onPrompt: (value: string) => void; onImage: () => void }) {
+function EmptyState({ suggestions, onPrompt, onImage }: { suggestions: QuickSuggestion[]; onPrompt: (value: string) => void; onImage: () => void }) {
   return (
     <section className="mx-auto flex min-h-full max-w-sm flex-col justify-center pb-12 text-center">
       <span className="mx-auto flex size-14 items-center justify-center rounded-3xl bg-emerald-50 text-[#00bc7c]">
@@ -299,11 +372,58 @@ function EmptyState({ onPrompt, onImage }: { onPrompt: (value: string) => void; 
       <h2 className="mt-5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Ghi một giao dịch mới</h2>
       <p className="mx-auto mt-2 max-w-[270px] text-sm leading-6 text-slate-500">Nhập theo cách tự nhiên, hoặc gửi ảnh biên lai để tự động tách giao dịch.</p>
       <div className="mt-7 flex flex-wrap justify-center gap-2">
-        {quickPrompts.map((prompt) => <button key={prompt} type="button" onClick={() => onPrompt(prompt)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-[#00bc7c]/40 hover:text-[#00a970]">{prompt}</button>)}
+        {(suggestions.length ? suggestions.map((suggestion) => ({
+          id: `${suggestion.label}-${suggestion.amount}-${suggestion.categoryName}`,
+          label: `${suggestion.label} · ${suggestion.amountText}đ`,
+          prompt: suggestion.prompt,
+        })) : quickPrompts.map((prompt) => ({ id: prompt, label: prompt, prompt }))).map((suggestion) => (
+          <button key={suggestion.id} type="button" onClick={() => onPrompt(suggestion.prompt)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-[#00bc7c]/40 hover:text-[#00a970]">{suggestion.label}</button>
+        ))}
       </div>
       <button type="button" onClick={onImage} className="mx-auto mt-5 flex items-center gap-2 text-sm font-semibold text-[#00a970]">
         <ImagePlus className="size-4" /> Gửi ảnh giao dịch
       </button>
+    </section>
+  );
+}
+
+function OfflineNotesPanel({ entries, activeId, isOnline, onUse, onDelete }: {
+  entries: OfflineQueueEntry[];
+  activeId: string | null;
+  isOnline: boolean;
+  onUse: (entry: QueuedAiNote) => void;
+  onDelete: (entry: OfflineQueueEntry) => void | Promise<void>;
+}) {
+  if (!entries.length) return null;
+  return (
+    <section className="mx-auto mb-4 max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold text-amber-900">Ghi chú chờ AI phân tích ({entries.length})</p>
+        {!isOnline ? <span className="text-[11px] text-amber-700">Đang offline</span> : null}
+      </div>
+      <div className="mt-2 space-y-2">
+        {entries.map((entry) => {
+          const label = entry.kind === 'ai_note'
+            ? entry.message
+            : `${entry.values.description} · ${formatCurrency(entry.values.amount)} · ${entry.values.expense_date}`;
+          return (
+            <div key={entry.id} className="flex items-center gap-2 rounded-xl bg-white p-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs text-slate-700">{label}</p>
+                {entry.lastError ? <p className="mt-1 text-[10px] text-rose-600">{entry.lastError}</p> : null}
+              </div>
+              {entry.kind === 'ai_note' ? (
+                <Button type="button" size="sm" disabled={!isOnline || activeId === entry.id} onClick={() => onUse(entry)} className="h-8 rounded-lg bg-[#00bc7c] px-2.5 text-[11px]">
+                  {activeId === entry.id ? 'Đã đưa vào ô nhập' : 'Phân tích'}
+                </Button>
+              ) : (
+                <span className="shrink-0 text-[10px] font-medium text-amber-700">Chờ đồng bộ</span>
+              )}
+              <button type="button" aria-label="Xóa bản ghi offline" onClick={() => void onDelete(entry)} className="px-1 text-xs text-slate-400">Xóa</button>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

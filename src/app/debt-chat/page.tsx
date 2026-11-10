@@ -62,7 +62,7 @@ export default function DebtChatPage() {
     try {
       const formData = new FormData();
       if (file) formData.append("image", file);
-      if (input) formData.append("text", input);
+      if (input) formData.append("message", input);
       formData.append("type", "debt");
 
       const res = await fetch("/api/chat", {

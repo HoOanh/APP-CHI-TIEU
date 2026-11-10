@@ -29,6 +29,8 @@ import { useToast } from '@/hooks/useToast';
 import { formatCurrency, getCurrentMonth, getPercentage } from '@/lib/utils';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { AiProvidersSettings } from '@/components/AiProvidersSettings';
+import { PwaReminderSettings } from '@/components/PwaReminderSettings';
+import { clearPwaCache } from '@/lib/pwa-cache';
 
 const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
 
@@ -73,6 +75,7 @@ export default function SettingsPage() {
   const [month, setMonth] = useState(getCurrentMonth());
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [isLoading, setIsLoading] = useState(true);
+  const [isClearingPwaCache, setIsClearingPwaCache] = useState(false);
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState({
     name: '',
@@ -172,6 +175,24 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleClearPwaCache() {
+    setIsClearingPwaCache(true);
+    try {
+      const clearedCacheCount = await clearPwaCache();
+      showToast(
+        clearedCacheCount > 0
+          ? 'Đã xóa bộ nhớ đệm của ARC Irobot'
+          : 'Không có bộ nhớ đệm ứng dụng cần xóa',
+        'success',
+        'Giao dịch, dữ liệu tài khoản và phiên đăng nhập vẫn được giữ nguyên.',
+      );
+    } catch {
+      showToast('Không thể xóa bộ nhớ đệm trên trình duyệt này', 'error');
+    } finally {
+      setIsClearingPwaCache(false);
+    }
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-5xl space-y-6 bg-background p-4 pb-nav md:p-8">
       <header className="flex items-center gap-3 pt-2">
@@ -235,6 +256,8 @@ export default function SettingsPage() {
       </section>
 
       <AiProvidersSettings />
+
+      <PwaReminderSettings />
 
       <div className="grid gap-6">
 
@@ -361,6 +384,32 @@ export default function SettingsPage() {
               onClick={handleExport}
             >
               <Download className="size-4" /> Xuất toàn bộ dữ liệu JSON
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border-border bg-white shadow-sm">
+          <CardHeader className="p-5 pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+              <Database className="size-4 text-emerald-600" /> Ứng dụng & bộ nhớ đệm
+            </CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              Trên iPhone, mở ARC Irobot bằng Safari, chọn Chia sẻ → Thêm vào Màn hình chính để dùng như ứng dụng. Tài nguyên giao diện sẽ được lưu trên thiết bị để lần mở sau nhanh hơn.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3 p-5 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="max-w-xl text-xs leading-relaxed text-muted-foreground">
+              Xóa các tệp giao diện đã lưu nếu cần tải lại bản mới. Thao tác này không xóa giao dịch, dữ liệu tài khoản hay phiên đăng nhập.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 shrink-0 rounded-2xl border-border"
+              disabled={isClearingPwaCache}
+              onClick={() => void handleClearPwaCache()}
+            >
+              <Trash2 className="size-4" />
+              {isClearingPwaCache ? 'Đang xóa...' : 'Xóa bộ nhớ đệm'}
             </Button>
           </CardContent>
         </Card>

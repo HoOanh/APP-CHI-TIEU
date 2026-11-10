@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+import { z } from 'zod';
+
+const debtJarSchema = z.object({
+  debt_id: z.coerce.number().int().positive(),
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  planned_amount: z.coerce.number().finite().positive(),
+});
 
 export async function GET(request: NextRequest) {
   try {
@@ -45,7 +52,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { debt_id, month, planned_amount } = await request.json();
+    const parsed = debtJarSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Thông tin hũ tiết kiệm không hợp lệ' }, { status: 400 });
+    }
+    const { debt_id, month, planned_amount } = parsed.data;
     const db = await getDb();
     
     const ownedDebt = await db.execute({

@@ -98,13 +98,16 @@ export default function DebtDetailPage() {
       const res = await fetch(`/api/debts/${id}/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: Number(values.amount), note: values.note }),
+        body: JSON.stringify({ amount: Number(values.amount), payment_date: getVietnamToday(), note: values.note }),
       });
       if (res.ok) {
         showToast("Đã ghi nhận thanh toán");
         setIsPaymentOpen(false);
         paymentForm.reset({ amount: '', note: '' });
         fetchData();
+      } else {
+        const result: { error?: string } = await res.json();
+        showToast(result.error || "Lỗi khi thêm thanh toán", "error");
       }
     } catch {
       showToast("Lỗi khi thêm thanh toán", "error");
@@ -116,13 +119,16 @@ export default function DebtDetailPage() {
       const res = await fetch(`/api/debts/jars`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ debt_id: id, ...values, target_amount: Number(values.target_amount) }),
+        body: JSON.stringify({ debt_id: id, month: values.month, planned_amount: Number(values.target_amount) }),
       });
       if (res.ok) {
         showToast("Đã cập nhật hũ tiết kiệm trả nợ");
         setIsJarOpen(false);
         jarForm.reset({ ...values, target_amount: '' });
         fetchData();
+      } else {
+        const result: { error?: string } = await res.json();
+        showToast(result.error || "Lỗi cập nhật hũ", "error");
       }
     } catch {
       showToast("Lỗi cập nhật hũ", "error");

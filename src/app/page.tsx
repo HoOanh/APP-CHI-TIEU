@@ -11,6 +11,7 @@ import {
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { WeeklyInsightCard } from '@/components/WeeklyInsightCard';
 import {
   cn,
   formatCurrency,
@@ -155,6 +156,7 @@ export default function DashboardPage() {
       </section>
 
       <aside className="space-y-6 xl:col-span-5">
+      <WeeklyInsightCard />
       <section>
         <SectionTitle title="Chi theo danh mục" href="/settings#thong-ke" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
