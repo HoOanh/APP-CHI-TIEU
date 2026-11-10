@@ -68,9 +68,15 @@
 ## QA conclusion
 
 - **Release decision: CONDITIONAL.** Debt payment, debt jar, zero-payment rejection, and insight formatting were corrected and retested; TypeScript, production build, and unit tests pass. Lint has warnings but no errors. Personal Gemini-provider generation returned 404/503 for the selected models, while server fallback AI worked. This remains an observed provider/model risk; actual push delivery also remains unverified on a real installed device.
-- **Responsive visual result:** the inspected pages preserve separate desktop/tablet/mobile behavior, and the tested list pages switch from desktop tables to mobile cards. No horizontal overflow was observed at the tested widths. The rendered Markdown and default `AI` category still need UX correction.
+- **Responsive visual result:** the inspected pages preserve separate desktop/tablet/mobile behavior, and the tested list pages switch from desktop tables to mobile cards. No horizontal overflow was observed at the tested widths. The insight card's raw Markdown display was corrected; the manual transaction form still defaults to the `AI` category.
 - **Environment gaps:** Google OAuth could not be completed because local OAuth credentials are absent; real push delivery could not be verified because headless Chromium denied notifications. The tests used the real app/API code against an isolated SQLite database, not the configured Turso database.
 - **Coverage limit:** every primary route and the key create/edit/delete flows listed above were exercised. The report does not claim coverage of every possible provider model, browser/OS combination, notification permission state, or every unlisted secondary control.
+
+## Release deployment note
+
+- The first Vercel production deployment was rejected because this project is on Hobby and Vercel limits Hobby cron jobs to once per day; the app needs a five-minute dispatch interval for configured reminders.
+- The schedule was moved to a GitHub Actions workflow every five minutes. This repository is public, so standard GitHub-hosted runner usage is free. GitHub notes scheduled runs can be delayed under load and public-repository schedules are disabled after 60 days without repository activity; keep this limitation in mind for time-sensitive reminders. See [GitHub workflow schedule syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax) and [scheduled event behavior](https://docs.github.com/en/enterprise-cloud%40latest/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+- Production now has `WEB_PUSH_VAPID_PUBLIC_KEY`, `WEB_PUSH_VAPID_PRIVATE_KEY`, and `CRON_SECRET` configured. The matching cron secret is stored as a GitHub Actions secret. Secret values are intentionally omitted.
 
 ## Visual evidence
 

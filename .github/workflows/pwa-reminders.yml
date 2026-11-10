@@ -1,0 +1,27 @@
+name: PWA reminders
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pwa-reminders
+  cancel-in-progress: false
+
+jobs:
+  dispatch-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Dispatch due reminders
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --max-time 55 \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            https://app-chi-tieu-delta.vercel.app/api/cron/pwa-reminders
