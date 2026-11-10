@@ -78,6 +78,7 @@
 - The schedule was moved to a GitHub Actions workflow every five minutes. This repository is public, so standard GitHub-hosted runner usage is free. GitHub notes scheduled runs can be delayed under load and public-repository schedules are disabled after 60 days without repository activity; keep this limitation in mind for time-sensitive reminders. See [GitHub workflow schedule syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax) and [scheduled event behavior](https://docs.github.com/en/enterprise-cloud%40latest/actions/reference/workflows-and-actions/events-that-trigger-workflows).
 - Production now has `WEB_PUSH_VAPID_PUBLIC_KEY`, `WEB_PUSH_VAPID_PRIVATE_KEY`, and `CRON_SECRET` configured. The matching cron secret is stored as a GitHub Actions secret. Secret values are intentionally omitted.
 - The proxy now lets only `/api/cron/pwa-reminders` reach its own `CRON_SECRET` check without a user session. Local production-mode proxy retest returned 401 without/with a wrong secret and 200 with the valid secret; other API routes remain behind session authentication.
+- Release `v1.2.2` is deployed to Vercel Production (`Ready`). A manual GitHub Actions dispatch completed successfully and called the production cron endpoint: `ok: true`, `checked: 0`, `sent: 0`; no push notification was sent during verification. Real delivery to a subscribed device remains unverified.
 
 ## Visual evidence
 
