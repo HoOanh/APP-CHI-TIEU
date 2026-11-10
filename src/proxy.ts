@@ -6,7 +6,9 @@ import { isGoogleAuthConfigured } from '@/lib/current-user';
 export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublicRoute =
-    pathname.startsWith('/login') || pathname.startsWith('/api/auth');
+    pathname.startsWith('/login')
+    || pathname.startsWith('/api/auth')
+    || pathname === '/api/cron/pwa-reminders';
 
   if (isPublicRoute) {
     return NextResponse.next();
