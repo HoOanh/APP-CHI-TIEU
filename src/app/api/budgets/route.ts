@@ -64,7 +64,12 @@ export async function GET(request: NextRequest) {
     });
 
     const enriched = result.rows.map((budget) => {
-      const dailyLimit = Number(budget.daily_limit) || 0;
+      const explicitDailyLimit = Number(budget.daily_limit) || 0;
+      const dailyLimit = explicitDailyLimit > 0
+        ? explicitDailyLimit
+        : budget.budget_basis === 'daily'
+          ? Number(budget.daily_amount) || 0
+          : 0;
       const freqLimit = Number(budget.frequency_limit) || 0;
       const freqPeriod = (budget.frequency_period as string) || '';
       const todaySpent = Number(budget.today_spent) || 0;
@@ -86,34 +91,43 @@ export async function GET(request: NextRequest) {
       if (percentage >= 100) {
         alerts.push({
           type: 'monthly_budget',
-          title: 'Đã vượt ngân sách tháng',
-          message: `Vượt ${formatNum(spentAmount - budgetAmount)}. Tạm dừng chi ở hũ này hoặc tăng ngân sách.`,
+          title: '🚨 Đã vượt ngân sách tháng',
+          message: spentAmount > budgetAmount
+            ? `Đã lố ${formatNum(spentAmount - budgetAmount)}đ (${formatNum(spentAmount)}đ / ${formatNum(budgetAmount)}đ). Tạm dừng chi ở hũ này ngay!`
+            : `Đã chạm kịch trần 100% ngân sách tháng (${formatNum(budgetAmount)}đ).`,
           severity: 'danger',
         });
       } else if (percentage >= warningPercent) {
         const remaining = budgetAmount - spentAmount;
         alerts.push({
           type: 'monthly_budget',
-          title: `Đã dùng ${Math.round(percentage)}% ngân sách`,
+          title: `Đã dùng ${Math.round(percentage)}% ngân sách tháng`,
           message: daysLeft
-            ? `Còn ${formatNum(remaining)} · nên chi tối đa ${formatNum(remaining / daysLeft)}/ngày trong ${daysLeft} ngày tới.`
-            : `Còn ${formatNum(remaining)} trước khi chạm trần ngân sách.`,
+            ? `Còn ${formatNum(remaining)}đ · nên chi tối đa ${formatNum(Math.round(remaining / daysLeft))}đ/ngày trong ${daysLeft} ngày tới.`
+            : `Còn ${formatNum(remaining)}đ trước khi chạm trần ngân sách.`,
           severity: 'warning',
         });
       }
 
-      if (dailyLimit > 0 && todaySpent >= dailyLimit) {
+      if (dailyLimit > 0 && todaySpent > dailyLimit) {
         alerts.push({
           type: 'daily_limit',
-          title: 'Đã vượt giới hạn hôm nay',
-          message: `Vượt ${formatNum(todaySpent - dailyLimit)}. Hãy chuyển khoản chi tiếp theo sang ngày mai nếu có thể.`,
+          title: '🚨 Chi lố hạn mức ngày hôm nay!',
+          message: `Hôm nay đã chi ${formatNum(todaySpent)}đ / định mức ${formatNum(dailyLimit)}đ/ngày (vượt lố ${formatNum(todaySpent - dailyLimit)}đ). Dừng chi hũ này trong hôm nay!`,
           severity: 'danger',
+        });
+      } else if (dailyLimit > 0 && todaySpent === dailyLimit) {
+        alerts.push({
+          type: 'daily_limit',
+          title: '⚠️ Đã chạm kịch trần chi tiêu hôm nay',
+          message: `Hôm nay đã chi hết ${formatNum(todaySpent)}đ / ${formatNum(dailyLimit)}đ. Chi thêm sẽ bị lố hạn mức ngày!`,
+          severity: 'warning',
         });
       } else if (dailyLimit > 0 && todaySpent >= dailyLimit * 0.8) {
         alerts.push({
           type: 'daily_limit',
-          title: 'Sắp chạm giới hạn hôm nay',
-          message: `Còn ${formatNum(dailyLimit - todaySpent)} trong giới hạn ${formatNum(dailyLimit)}/ngày.`,
+          title: 'Sắp chạm hạn mức ngày hôm nay',
+          message: `Hôm nay đã chi ${formatNum(todaySpent)}đ, chỉ còn ${formatNum(dailyLimit - todaySpent)}đ trong định mức ${formatNum(dailyLimit)}đ/ngày.`,
           severity: 'warning',
         });
       }

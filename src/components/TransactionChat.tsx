@@ -8,7 +8,9 @@ import { notifyTransactionsChanged } from '@/lib/transaction-events';
 import {
   ArrowLeft,
   ImagePlus,
+  LoaderCircle,
   Mic,
+  PenLine,
   Square,
   ReceiptText,
   SendHorizontal,
@@ -36,6 +38,7 @@ interface Message {
   content: string;
   images?: string[];
   transactions?: SavedTransaction[];
+  budgetAlerts?: { title: string; message: string; severity: 'warning' | 'danger' }[];
   failedSubmission?: ChatSubmission;
   canEditSubmission?: boolean;
 }
@@ -198,6 +201,7 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
           ? `Đã lưu ${transactions.length} giao dịch.`
           : 'Tin nhắn này đã được xử lý.',
         transactions,
+        budgetAlerts: data.budgetAlerts,
       }]);
       refreshData();
       for (const alert of data.budgetAlerts ?? []) {
@@ -266,9 +270,28 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
     await submit(submission);
   };
 
-  const { listening, voiceStatus, toggleVoice } = useVoiceCapture(
+  const {
+    listening,
+    transcribing,
+    speechActive,
+    finalTranscript,
+    interimTranscript,
+    liveTranscript,
+    voiceStatus,
+    showMobilePermissionHint,
+    stopAndSubmitVoice,
+    stopAndEditVoice,
+    cancelVoice,
+    toggleVoice,
+  } = useVoiceCapture(
     (text) => void handleSend(text),
     () => composerRef.current?.focus(),
+    (captured) => {
+      if (captured) {
+        setInput((current) => current.trim() ? `${current.trim()} ${captured}` : captured);
+      }
+      composerRef.current?.focus();
+    },
   );
 
   const handleRetry = (message: Message) => {
@@ -307,7 +330,7 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
   };
 
   return (
-    <div className={cn("flex w-full flex-col overflow-hidden bg-[#f7f9fb]", embedded ? (messages.length ? "h-[min(540px,calc(100dvh-2rem))]" : "max-h-[calc(100dvh-2rem)]") : "h-dvh")}>
+    <div className={cn("flex w-full flex-col overflow-hidden bg-[#f7f9fb]", embedded ? (messages.length || listening ? "h-[min(560px,calc(100dvh-2rem))]" : "max-h-[calc(100dvh-2rem)]") : "h-dvh")}>
       <header className={cn("flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 md:px-6", embedded && "pr-12 md:pr-12")}>
         <div className="flex min-w-0 items-center">
         {!embedded && <Link href="/" aria-label="Quay lại" className="mr-3 flex size-9 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100">
@@ -324,6 +347,7 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
         </div>
       </header>
 
+      <div className="relative flex min-h-0 flex-1 flex-col">
       <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
         <OfflineNotesPanel
           entries={offlineEntries}
@@ -354,6 +378,21 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
         <div ref={messagesEndRef} />
       </main>
 
+      {listening ? (
+        <VoiceListeningOverlay
+          transcribing={transcribing}
+          speechActive={speechActive}
+          finalTranscript={finalTranscript}
+          interimTranscript={interimTranscript}
+          liveTranscript={liveTranscript}
+          showMobilePermissionHint={showMobilePermissionHint}
+          onStopAndSubmit={stopAndSubmitVoice}
+          onEdit={stopAndEditVoice}
+          onCancel={cancelVoice}
+        />
+      ) : null}
+      </div>
+
       <div className="shrink-0 border-t border-slate-200 bg-white p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
         {imagePreviews.length ? (
           <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -367,7 +406,11 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
             ))}
           </div>
         ) : null}
-        {voiceStatus && <p role="status" className="mx-auto mb-2 max-w-3xl px-1 text-xs text-slate-600">{voiceStatus}</p>}
+        {voiceStatus && !listening ? (
+          <p role="status" className="mx-auto mb-2 max-w-3xl rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            {voiceStatus}
+          </p>
+        ) : null}
         <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
           <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileSelect} />
           <Button type="button" variant="outline" size="icon" className="size-11 shrink-0 rounded-2xl border-slate-200 text-slate-500" onClick={() => fileInputRef.current?.click()}>
@@ -483,6 +526,27 @@ function MessageBubble({ message, onRetry, onEditSubmission, onSaved }: {
         {message.images?.length ? <div className="mb-2 grid grid-cols-2 gap-1.5">{message.images.map((image, index) => <Image key={image} src={image} alt={`Ảnh giao dịch ${index + 1}`} width={240} height={160} unoptimized className="h-28 w-full rounded-xl object-cover" />)}</div> : null}
         {message.content ? <p className="whitespace-pre-wrap">{message.content}</p> : null}
         {message.transactions?.map((transaction) => <TransactionCard key={transaction.id} transaction={transaction} onSaved={onSaved} />)}
+        {message.budgetAlerts?.length ? (
+          <div className="mt-3 space-y-2">
+            {message.budgetAlerts.map((alert, idx) => (
+              <div
+                key={idx}
+                role="alert"
+                className={cn(
+                  'rounded-xl p-3 text-xs leading-5',
+                  alert.severity === 'danger'
+                    ? 'overspend-card-pulse border-2 border-rose-400 bg-rose-600 font-medium text-white shadow-md'
+                    : 'border border-amber-300 bg-amber-50 text-amber-900',
+                )}
+              >
+                <p className="font-bold">{alert.title}</p>
+                <p className={cn('mt-0.5', alert.severity === 'danger' ? 'text-rose-50' : 'text-amber-800')}>
+                  {alert.message}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {onRetry || onEditSubmission ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {onRetry ? <Button type="button" size="sm" variant="outline" onClick={onRetry}>Thử lại</Button> : null}
@@ -522,4 +586,136 @@ function TransactionCard({ transaction, onSaved }: {
 
 function ThinkingBubble() {
   return <div className="flex items-center gap-2 self-start rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-3 text-xs text-slate-400"><Sparkles className="size-4 text-[#00bc7c]" /> Đang nhận diện và lưu giao dịch…</div>;
+}
+
+const WAVE_BARS = [
+  { delay: '0ms', height: '18px', activeHeight: '30px' },
+  { delay: '140ms', height: '26px', activeHeight: '42px' },
+  { delay: '280ms', height: '20px', activeHeight: '34px' },
+  { delay: '90ms', height: '32px', activeHeight: '48px' },
+  { delay: '220ms', height: '22px', activeHeight: '38px' },
+  { delay: '340ms', height: '28px', activeHeight: '44px' },
+  { delay: '170ms', height: '18px', activeHeight: '30px' },
+];
+
+function VoiceListeningOverlay({
+  transcribing,
+  speechActive,
+  finalTranscript,
+  interimTranscript,
+  liveTranscript,
+  showMobilePermissionHint,
+  onStopAndSubmit,
+  onEdit,
+  onCancel,
+}: {
+  transcribing: boolean;
+  speechActive: boolean;
+  finalTranscript: string;
+  interimTranscript: string;
+  liveTranscript: string;
+  showMobilePermissionHint: boolean;
+  onStopAndSubmit: () => void;
+  onEdit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="false"
+      aria-label="Đang nghe giọng nói"
+      className="absolute inset-0 z-20 flex flex-col items-center overflow-y-auto bg-[#f7f9fb]/95 px-5 py-6 text-center backdrop-blur-md"
+    >
+      <div className="my-auto flex w-full max-w-md flex-col items-center">
+      <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+        <span className="size-2 rounded-full bg-[#00bc7c] animate-pulse" />
+        {transcribing ? 'Đang xử lý giọng nói…' : 'Đang lắng nghe · Nói xong bấm tắt để gửi'}
+      </div>
+
+      <div className="relative flex size-32 items-center justify-center">
+        <span
+          aria-hidden
+          className={cn(
+            'voice-ripple-ring absolute inset-3 rounded-full border-2 border-[#00bc7c]/35 bg-[#00bc7c]/10',
+            speechActive && 'border-[#00bc7c]/55 bg-[#00bc7c]/15',
+          )}
+        />
+        <span
+          aria-hidden
+          style={{ animationDelay: '0.65s' }}
+          className={cn(
+            'voice-ripple-ring absolute inset-3 rounded-full border-2 border-[#00bc7c]/30 bg-[#00bc7c]/5',
+            speechActive && 'border-[#00bc7c]/45',
+          )}
+        />
+        <button
+          type="button"
+          disabled={transcribing}
+          onClick={onStopAndSubmit}
+          aria-label="Tắt mic và gửi giao dịch"
+          className={cn(
+            'relative z-10 flex size-20 items-center justify-center rounded-full bg-[#00bc7c] text-white shadow-[0_16px_36px_-10px_rgba(0,188,124,0.8)] transition-transform active:scale-95 disabled:opacity-75',
+            speechActive && 'scale-105 bg-[#00a970]',
+          )}
+        >
+          {transcribing ? <LoaderCircle className="size-8 animate-spin" aria-hidden /> : <Mic className="size-8" aria-hidden />}
+        </button>
+      </div>
+
+      <div aria-hidden className="mt-4 flex h-12 items-center justify-center gap-1.5">
+        {WAVE_BARS.map((bar, index) => (
+          <span
+            key={index}
+            className="voice-wave-bar w-1.5 rounded-full bg-gradient-to-t from-[#00a970] to-[#34d399] transition-[height] duration-200"
+            style={{
+              height: speechActive ? bar.activeHeight : bar.height,
+              animationDelay: bar.delay,
+              animationDuration: speechActive ? '0.65s' : '1.25s',
+            }}
+          />
+        ))}
+      </div>
+
+      <div className="mt-5 w-full max-w-md rounded-2xl border border-slate-200/90 bg-white px-4 py-4 shadow-sm">
+        {liveTranscript ? (
+          <p aria-live="polite" className="max-h-32 overflow-y-auto break-words text-base font-medium leading-relaxed text-slate-800 sm:text-lg">
+            <span>{finalTranscript}</span>
+            {finalTranscript && interimTranscript ? ' ' : null}
+            {interimTranscript ? <span className="text-emerald-700/80">{interimTranscript}</span> : null}
+            <span aria-hidden className="ml-0.5 inline-block h-4 w-0.5 translate-y-0.5 bg-[#00bc7c] animate-pulse" />
+          </p>
+        ) : (
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-slate-600">Hãy nói tên khoản chi/thu và số tiền…</p>
+            <p className="text-xs text-slate-400">Ví dụ: “Ăn trưa 50k” hoặc “Đổ xăng 100 nghìn”</p>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+        <Button type="button" variant="outline" onClick={onCancel} className="h-11 rounded-xl border-slate-200 bg-white px-4 text-slate-600">
+          <X className="size-4" /> Hủy
+        </Button>
+        <Button type="button" variant="outline" disabled={transcribing} onClick={onEdit} className="h-11 rounded-xl border-slate-200 bg-white px-4 text-slate-700">
+          <PenLine className="size-4" /> Sửa chữ
+        </Button>
+        <Button
+          type="button"
+          disabled={transcribing}
+          onClick={onStopAndSubmit}
+          className="h-11 rounded-xl bg-[#00bc7c] px-5 font-semibold text-white shadow-[0_12px_24px_-12px_rgba(0,188,124,0.85)] hover:bg-[#00a970]"
+        >
+          {transcribing ? <LoaderCircle className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
+          {transcribing ? 'Đang gửi…' : 'Tắt mic & gửi'}
+        </Button>
+      </div>
+
+      {showMobilePermissionHint ? (
+        <p className="mt-4 max-w-sm text-[11px] leading-4 text-slate-500">
+          Mẹo: Trên điện thoại, chọn <strong>Luôn cho phép</strong> (hoặc Safari: <strong>aA → Cài đặt trang web → Micrô → Cho phép</strong>) để không bị hỏi lại lần sau.
+        </p>
+      ) : null}
+      </div>
+    </div>
+  );
 }

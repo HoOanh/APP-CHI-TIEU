@@ -170,12 +170,20 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
     setOpen(false);
     resetForm();
     onSaved?.(result);
-    showToast(result.budgetAlert?.title || (transaction ? 'Đã cập nhật giao dịch' : 'Đã lưu giao dịch'), result.budgetAlert?.severity === 'danger' ? 'error' : 'success', result.budgetAlert?.message);
+    showToast(
+      result.budgetAlert?.title || (transaction ? 'Đã cập nhật giao dịch' : 'Đã lưu giao dịch'),
+      result.budgetAlert?.severity === 'danger'
+        ? 'error'
+        : result.budgetAlert?.severity === 'warning'
+          ? 'warning'
+          : 'success',
+      result.budgetAlert?.message,
+    );
   }
 
   return (
     <>
-      <Button type="button" variant={transaction ? 'ghost' : compact ? 'outline' : 'default'} size={transaction ? 'icon-sm' : 'default'} aria-label={transaction ? `Sửa ${transaction.description}` : 'Nhập thủ công'} className={transaction ? 'size-8 text-slate-400 hover:bg-emerald-50 hover:text-emerald-700' : 'rounded-lg'} onClick={() => setOpen(true)}>
+      <Button type="button" variant={transaction ? 'ghost' : compact ? 'outline' : 'default'} size={transaction ? 'icon-sm' : 'default'} aria-label={transaction ? `Sửa ${transaction.description}` : 'Nhập thủ công'} className={transaction ? 'size-8 text-slate-400 hover:bg-emerald-50 hover:text-emerald-700' : 'h-9 rounded-xl'} onClick={() => setOpen(true)}>
         <PenLine className="size-4" />{transaction ? null : <span className={iconOnMobile ? "hidden sm:inline" : undefined}>Nhập thủ công</span>}
       </Button>
       <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) resetForm(); }}>
@@ -193,19 +201,29 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="manual-amount">Số tiền (VND)</Label>
-                  <Input id="manual-amount" inputMode="numeric" autoComplete="off" placeholder="100.000" aria-invalid={Boolean(form.formState.errors.amount)} {...form.register('amount', { onChange: (event) => form.setValue('amount', formatMoneyInput(event.target.value)) })} className="h-12 rounded-lg text-lg font-semibold tabular-nums" />
+                  <Input id="manual-amount" inputMode="numeric" autoComplete="off" placeholder="100.000" aria-invalid={Boolean(form.formState.errors.amount)} {...form.register('amount', { onChange: (event) => form.setValue('amount', formatMoneyInput(event.target.value)) })} className="h-12 text-lg font-semibold tabular-nums" />
                   <FieldError message={form.formState.errors.amount?.message} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="manual-description">Nội dung</Label>
-                  <Input id="manual-description" maxLength={160} placeholder="Ví dụ: Ăn sáng + cafe" aria-invalid={Boolean(form.formState.errors.description)} {...form.register('description')} className="h-11 rounded-lg" />
+                  <Input id="manual-description" maxLength={160} placeholder="Ví dụ: Ăn sáng + cafe" aria-invalid={Boolean(form.formState.errors.description)} {...form.register('description')} />
                   <FieldError message={form.formState.errors.description?.message} />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="manual-category">Danh mục</Label>
                   <Controller control={form.control} name="category_id" render={({ field }) => <Select value={activeCategoryId} onValueChange={field.onChange}>
-                    <SelectTrigger id="manual-category" aria-label="Danh mục" aria-invalid={Boolean(form.formState.errors.category_id)} className="h-11 rounded-lg">
-                      <SelectValue placeholder="Chọn danh mục">{availableCategories.find((category) => String(category.id) === activeCategoryId)?.name || 'Chọn danh mục'}</SelectValue>
+                    <SelectTrigger id="manual-category" aria-label="Danh mục" aria-invalid={Boolean(form.formState.errors.category_id)}>
+                      <SelectValue placeholder="Chọn danh mục">
+                        {(() => {
+                          const selectedCategory = availableCategories.find((category) => String(category.id) === activeCategoryId);
+                          return selectedCategory ? (
+                            <span className="inline-flex min-w-0 items-center gap-2">
+                              <CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-6 rounded-md" iconClassName="size-3.5" />
+                              <span className="truncate">{selectedCategory.name}</span>
+                            </span>
+                          ) : 'Chọn danh mục';
+                        })()}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>{availableCategories.map((category) => <SelectItem key={category.id} value={String(category.id)}><span className="flex items-center gap-2"><CategoryIcon name={category.name} color={category.color} className="size-7 rounded-lg" iconClassName="size-3.5" />{category.name}</span></SelectItem>)}</SelectContent>
                   </Select>} />
@@ -214,14 +232,14 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
                 <Controller control={form.control} name="expense_date" render={({ field, fieldState }) => <DatePicker id="manual-date" label="Ngày giao dịch" value={field.value} onChange={field.onChange} invalid={Boolean(fieldState.error)} />} />
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="manual-note">Ghi chú <span className="font-normal text-slate-500">(không bắt buộc)</span></Label>
-                  <Textarea id="manual-note" rows={3} maxLength={500} placeholder="Thêm thông tin nếu cần" {...form.register('note')} className="min-h-20 resize-y rounded-lg" />
+                  <Textarea id="manual-note" rows={3} maxLength={500} placeholder="Thêm thông tin nếu cần" {...form.register('note')} className="min-h-20 resize-y" />
                   <FieldError message={form.formState.errors.note?.message} />
                 </div>
               </div>
             </div>
             <div className="flex gap-2 border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
-              <Button type="button" variant="outline" className="h-11 flex-1 rounded-lg" onClick={() => setOpen(false)}>Hủy</Button>
-              <Button type="submit" className="h-11 flex-1 rounded-lg" disabled={form.formState.isSubmitting || !availableCategories.length}>
+              <Button type="button" variant="outline" className="h-11 flex-1 rounded-xl" onClick={() => setOpen(false)}>Hủy</Button>
+              <Button type="submit" className="h-11 flex-1 rounded-xl font-semibold" disabled={form.formState.isSubmitting || !availableCategories.length}>
                 {form.formState.isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <CirclePlus className="size-4" />} {transaction ? 'Lưu thay đổi' : 'Lưu giao dịch'}
               </Button>
             </div>

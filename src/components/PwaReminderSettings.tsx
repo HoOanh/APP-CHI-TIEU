@@ -66,8 +66,9 @@ export function PwaReminderSettings() {
         ]);
         let hasDeviceSubscription = false;
         if ('serviceWorker' in navigator) {
-          const registration = await navigator.serviceWorker.getRegistration('/');
-          hasDeviceSubscription = Boolean(await registration?.pushManager.getSubscription());
+          const registration = (await navigator.serviceWorker.getRegistration('/'))
+            ?? (await navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined));
+          hasDeviceSubscription = Boolean(await registration?.pushManager?.getSubscription().catch(() => null));
         }
         if (active) {
           setReminders(reminderData);
@@ -108,8 +109,11 @@ export function PwaReminderSettings() {
         throw new Error('Trình duyệt này chưa hỗ trợ thông báo PWA.');
       }
 
-      const registration = await navigator.serviceWorker.getRegistration('/');
-      if (!registration) throw new Error('Hãy mở ứng dụng đã cài đặt rồi thử lại.');
+      const existingRegistration = await navigator.serviceWorker.getRegistration('/');
+      if (!existingRegistration) {
+        await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      }
+      const registration = await navigator.serviceWorker.ready;
       const currentSubscription = await registration.pushManager.getSubscription();
       if (push.subscribed || currentSubscription) {
         const endpoint = currentSubscription?.endpoint;
@@ -136,10 +140,22 @@ export function PwaReminderSettings() {
         : await Notification.requestPermission();
       if (permission !== 'granted') throw new Error('Chưa được cấp quyền gửi thông báo.');
 
-      const subscription = currentSubscription || await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: decodeVapidKey(push.publicKey),
-      });
+      let subscription: PushSubscription;
+      try {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: decodeVapidKey(push.publicKey),
+        });
+      } catch (subscribeError) {
+        const message = subscribeError instanceof Error ? subscribeError.message.toLowerCase() : '';
+        if (message.includes('push service') || (subscribeError instanceof DOMException && subscribeError.name === 'AbortError')) {
+          throw new Error(
+            'Trình duyệt đang chặn dịch vụ Web Push. Nếu dùng Brave: mở brave://settings/privacy → bật "Use Google services for push messaging" rồi khởi động lại trình duyệt.',
+          );
+        }
+        throw subscribeError;
+      }
+
       const response = await fetch('/api/pwa/push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -151,6 +167,12 @@ export function PwaReminderSettings() {
         throw new Error(errorData?.error || 'Không thể đăng ký thiết bị nhận thông báo.');
       }
       setPush((current) => ({ ...current, subscribed: true }));
+      void registration.showNotification('ARC Irobot', {
+        body: 'Đã bật thông báo nhắc nhở trên thiết bị này.',
+        icon: '/pwa-192.png',
+        badge: '/pwa-192.png',
+        tag: 'arc-irobot-push-enabled',
+      }).catch(() => undefined);
       showToast('Đã bật thông báo trên thiết bị này', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Không thể bật thông báo', 'error');

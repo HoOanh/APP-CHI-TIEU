@@ -14,13 +14,7 @@ export default async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!isGoogleAuthConfigured()) {
-    if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json(
-        { error: 'Authentication is not configured' },
-        { status: 503 },
-      );
-    }
+  if (!isGoogleAuthConfigured() && process.env.NODE_ENV !== 'production') {
     return NextResponse.next();
   }
 

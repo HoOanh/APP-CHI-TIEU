@@ -13,7 +13,7 @@ export function QuickEntryAccess({ onChatPage = false }: { onChatPage?: boolean 
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button type="button" variant="outline" size="sm" aria-label="Thêm lối tắt Ghi nhanh" className="h-9 gap-1.5 rounded-lg border-emerald-200 bg-emerald-50 px-2 text-emerald-900 hover:bg-emerald-100 sm:px-3">
+        <Button type="button" variant="outline" size="sm" aria-label="Thêm lối tắt Ghi nhanh" className="h-9 gap-1.5 rounded-xl border-emerald-200 bg-emerald-50 px-2 text-emerald-900 hover:bg-emerald-100 sm:px-3">
           <PlusSquare className="size-4" aria-hidden /> Lối tắt
         </Button>
       </DialogTrigger>

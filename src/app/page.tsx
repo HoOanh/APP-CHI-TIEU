@@ -4,9 +4,11 @@ import Link from 'next/link';
 import useSWR from 'swr';
 import { QuickEntryAccess } from '@/components/QuickEntryAccess';
 import {
+  AlertTriangle,
   ChevronRight,
   ReceiptText,
   Settings,
+  Siren,
   WalletCards,
 } from 'lucide-react';
 import { CategoryIcon } from '@/components/CategoryIcon';
@@ -38,6 +40,9 @@ interface Budget {
   category_color: string;
   budget_amount: number;
   spent_amount: number;
+  today_spent?: number;
+  daily_limit?: number;
+  alert_type?: 'monthly' | 'daily';
   warning_percent: number;
   alert_severity: 'warning' | 'danger';
   alert_message: string;
@@ -114,8 +119,8 @@ export default function DashboardPage() {
       <section className="overflow-hidden rounded-[24px] bg-[#00bc7c] text-white shadow-[0_18px_38px_-24px_rgba(0,188,124,0.75)]">
         <div className="relative p-5 sm:p-6">
           <div className="absolute -right-12 -top-20 size-52 rounded-full border-[28px] border-white/10" />
-          <div className="relative flex items-start justify-between gap-4">
-            <div className="min-w-0">
+          <div className="relative flex min-w-0 items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/65">Số dư hiện tại</p>
               {summary ? (
                 <p className="mt-2 truncate text-[clamp(1.9rem,9vw,3.2rem)] font-semibold leading-none tracking-[-0.055em] tabular-nums">{formatCurrency(summary.walletBalance)}</p>
@@ -133,14 +138,49 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <div className="my-4 flex items-center gap-3 px-1 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5"><ReceiptText className="size-4 text-[#00a970]" /> {summary ? `${summary.transactionCount} giao dịch tháng này` : 'Đang tải giao dịch…'}</span>
-        <span className="h-3 w-px bg-slate-200" />
-        <span className="truncate">TB chi: <strong className="font-semibold text-slate-700">{summary ? formatCurrency(summary.dailyAverage) : '—'}</strong>/ngày</span>
+      <div className="my-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-slate-500">
+        <span className="flex shrink-0 items-center gap-1.5"><ReceiptText className="size-4 text-[#00a970]" /> {summary ? `${summary.transactionCount} giao dịch tháng này` : 'Đang tải giao dịch…'}</span>
+        <span className="h-3 w-px shrink-0 bg-slate-200" />
+        <span className="min-w-0 truncate">TB chi: <strong className="font-semibold text-slate-700">{summary ? formatCurrency(summary.dailyAverage) : '—'}</strong>/ngày</span>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-12">
-      <section className="mb-7 xl:col-span-7">
+      {attentionBudgets && attentionBudgets.some((item) => item.alert_severity === 'danger') ? (
+        <section
+          role="alert"
+          className="overspend-card-pulse mb-6 rounded-2xl border-2 border-rose-500 bg-rose-600 p-4 text-white shadow-[0_18px_40px_-14px_rgba(225,29,72,0.75)]"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-white/20 text-white">
+                <Siren className="size-5 animate-bounce" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold uppercase tracking-wide text-white">
+                  Cảnh báo chi tiêu lố hạn mức!
+                </p>
+                <div className="mt-1.5 space-y-1">
+                  {attentionBudgets
+                    .filter((item) => item.alert_severity === 'danger')
+                    .map((item) => (
+                      <p key={item.id} className="break-words text-xs font-medium leading-5 text-rose-50">
+                        • <strong className="font-bold text-white">{item.category_name}:</strong> {item.alert_message.replace(/^🚨\s*/, '')}
+                      </p>
+                    ))}
+                </div>
+              </div>
+            </div>
+            <Link
+              href="/planning"
+              className="shrink-0 rounded-xl bg-white px-3 py-1.5 text-xs font-bold text-rose-700 shadow-xs transition hover:bg-rose-50"
+            >
+              Xem hũ
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+      <section className="mb-7 min-w-0 xl:col-span-7">
         <SectionTitle title="Giao dịch gần đây" href="/expenses" />
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           {!recent ? (
@@ -164,9 +204,9 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <aside className="space-y-6 xl:col-span-5">
+      <aside className="min-w-0 space-y-6 xl:col-span-5">
       <WeeklyInsightCard />
-      <section>
+      <section className="min-w-0">
         <SectionTitle title="Chi theo danh mục" href="/stats" mobileHref="/settings#thong-ke" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           {categorySpending === null ? <div className="space-y-4">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-9 w-full" />)}</div> : categorySpending.length ? (
@@ -174,9 +214,9 @@ export default function DashboardPage() {
               {categorySpending.map((category) => {
                 const percentage = categoryTotal ? Math.round((Number(category.spent_amount) / categoryTotal) * 100) : 0;
                 return (
-                  <div key={category.id}>
-                    <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                      <span className="truncate font-medium text-slate-700">{category.name}</span>
+                  <div key={category.id} className="min-w-0">
+                    <div className="mb-2 flex min-w-0 items-center justify-between gap-3 text-sm">
+                      <span className="min-w-0 truncate font-medium text-slate-700">{category.name}</span>
                       <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-600">{formatCurrency(Number(category.spent_amount))} · {percentage}%</span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
@@ -190,22 +230,50 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section>
+      <section className="min-w-0">
         <SectionTitle title="Theo dõi ngân sách" href="/budgets" mobileHref="/planning" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          {attentionBudgets === null ? <div className="space-y-3">{[1, 2].map((item) => <Skeleton key={item} className="h-8 w-full" />)}</div> : attentionBudgets.length ? attentionBudgets.map((budget) => {
-            const progress = getPercentage(budget.spent_amount, budget.budget_amount);
-            return (
-              <div key={budget.id} className="mb-4 last:mb-0">
-                <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                  <span className={cn('truncate font-semibold', budget.alert_severity === 'danger' ? 'text-rose-600' : 'text-amber-700')}>{budget.category_name}</span>
-                  <span className="shrink-0 text-xs tabular-nums text-slate-400">{formatCurrency(budget.spent_amount)} / {formatCurrency(budget.budget_amount)}</span>
-                </div>
-                <Progress value={Math.min(progress, 100)} className="h-1.5" indicatorColor={progress >= 100 ? 'bg-[#f15b64]' : 'bg-[#f4b740]'} />
-                <p className={cn('mt-2 text-[11px] leading-4', budget.alert_severity === 'danger' ? 'text-rose-600' : 'text-amber-700')}>{budget.alert_message}</p>
-              </div>
-            );
-          }) : (
+          {attentionBudgets === null ? <div className="space-y-3">{[1, 2].map((item) => <Skeleton key={item} className="h-8 w-full" />)}</div> : attentionBudgets.length ? (
+            <div className="space-y-3">
+              {attentionBudgets.map((budget) => {
+                const isDailyAlert = budget.alert_type === 'daily' && Number(budget.daily_limit) > 0;
+                const currentVal = isDailyAlert ? Number(budget.today_spent || 0) : budget.spent_amount;
+                const limitVal = isDailyAlert ? Number(budget.daily_limit || 0) : budget.budget_amount;
+                const progress = getPercentage(currentVal, limitVal);
+                const isDanger = budget.alert_severity === 'danger';
+
+                return (
+                  <div
+                    key={budget.id}
+                    className={cn(
+                      'min-w-0 rounded-xl p-3 transition-all',
+                      isDanger
+                        ? 'overspend-card-pulse border-2 border-rose-500 bg-rose-50/80'
+                        : 'border border-amber-200 bg-amber-50/50',
+                    )}
+                  >
+                    <div className="mb-2 flex min-w-0 items-center justify-between gap-2 text-sm">
+                      <span className={cn('flex min-w-0 items-center gap-1.5 truncate font-bold', isDanger ? 'text-rose-700' : 'text-amber-800')}>
+                        {isDanger ? <Siren className="size-4 shrink-0 text-rose-600" /> : <AlertTriangle className="size-4 shrink-0 text-amber-600" />}
+                        <span className="truncate">{budget.category_name}</span>
+                      </span>
+                      <span className={cn('shrink-0 text-xs font-bold tabular-nums', isDanger ? 'text-rose-700' : 'text-amber-800')}>
+                        {isDailyAlert ? 'Hôm nay: ' : ''}{formatCurrency(currentVal)} / {formatCurrency(limitVal)}
+                      </span>
+                    </div>
+                    <Progress
+                      value={Math.min(progress, 100)}
+                      className="h-2 bg-white/80"
+                      indicatorColor={isDanger ? 'bg-rose-600' : 'bg-[#f4b740]'}
+                    />
+                    <p className={cn('mt-2 break-words text-xs font-medium leading-4', isDanger ? 'text-rose-700' : 'text-amber-800')}>
+                      {budget.alert_message}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
             <p className="py-2 text-center text-sm text-slate-500">Ngân sách đang trong tầm kiểm soát.</p>
           )}
         </div>
@@ -228,10 +296,10 @@ function MoneyMetric({ label, value, prefix, tone, className }: { label: string;
 
 function SectionTitle({ title, href, mobileHref }: { title: string; href: string; mobileHref?: string }) {
   return (
-    <div className="mb-3 flex items-center justify-between">
-      <h2 className="text-[15px] font-semibold text-slate-800">{title}</h2>
-      <Link href={href} className={cn('items-center text-xs font-medium text-slate-500', mobileHref ? 'hidden md:flex' : 'flex')}>Xem tất cả <ChevronRight className="size-3.5" /></Link>
-      {mobileHref && <Link href={mobileHref} className="flex items-center text-xs font-medium text-slate-500 md:hidden">Xem tất cả <ChevronRight className="size-3.5" /></Link>}
+    <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
+      <h2 className="min-w-0 truncate text-[15px] font-semibold text-slate-800">{title}</h2>
+      <Link href={href} className={cn('shrink-0 items-center text-xs font-medium text-slate-500', mobileHref ? 'hidden md:flex' : 'flex')}>Xem tất cả <ChevronRight className="size-3.5" /></Link>
+      {mobileHref && <Link href={mobileHref} className="flex shrink-0 items-center text-xs font-medium text-slate-500 md:hidden">Xem tất cả <ChevronRight className="size-3.5" /></Link>}
     </div>
   );
 }

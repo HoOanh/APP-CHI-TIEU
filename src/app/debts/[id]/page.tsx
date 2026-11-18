@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MonthPicker } from "@/components/MonthPicker";
 import { useToast } from "@/hooks/useToast";
 import { formatCurrency, formatDate, getCurrentMonth, getPercentage, getVietnamToday, cn } from "@/lib/utils";
 import { useForm } from 'react-hook-form';
@@ -218,17 +219,17 @@ export default function DebtDetailPage() {
             <DialogHeader>
               <DialogTitle>Ghi nhận trả nợ</DialogTitle>
             </DialogHeader>
-            <form onSubmit={paymentForm.handleSubmit(handleAddPayment)} noValidate className="space-y-4 mt-2">
+            <form onSubmit={paymentForm.handleSubmit(handleAddPayment)} noValidate className="mt-2 space-y-4">
               <div className="space-y-2">
-                <Label>Số tiền</Label>
-                <Input type="number" min="1" className="rounded-xl" value={newPayment.amount} aria-invalid={Boolean(paymentForm.formState.errors.amount)} onChange={(event) => paymentForm.setValue('amount', event.target.value, { shouldValidate: true })} />
+                <Label htmlFor="payment-amount">Số tiền</Label>
+                <Input id="payment-amount" type="number" min="1" className="tabular-nums" value={newPayment.amount} aria-invalid={Boolean(paymentForm.formState.errors.amount)} onChange={(event) => paymentForm.setValue('amount', event.target.value, { shouldValidate: true })} />
                 {paymentForm.formState.errors.amount?.message ? <p role="alert" className="text-xs text-red-600">{paymentForm.formState.errors.amount.message}</p> : null}
               </div>
               <div className="space-y-2">
-                <Label>Ghi chú</Label>
-                <Input className="rounded-xl" value={newPayment.note} onChange={(event) => paymentForm.setValue('note', event.target.value, { shouldValidate: true })} />
+                <Label htmlFor="payment-note">Ghi chú</Label>
+                <Input id="payment-note" value={newPayment.note} onChange={(event) => paymentForm.setValue('note', event.target.value, { shouldValidate: true })} />
               </div>
-              <Button type="submit" className="w-full rounded-xl">Lưu</Button>
+              <Button type="submit" className="h-11 w-full rounded-xl font-semibold">Lưu</Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -280,17 +281,21 @@ export default function DebtDetailPage() {
             </DialogTrigger>
             <DialogContent className="rounded-2xl max-w-sm">
               <DialogHeader><DialogTitle>Cập nhật hũ tháng {newJar.month}</DialogTitle></DialogHeader>
-              <form onSubmit={jarForm.handleSubmit(handleAddJar)} noValidate className="space-y-4 mt-2">
+              <form onSubmit={jarForm.handleSubmit(handleAddJar)} noValidate className="mt-2 space-y-4">
                 <div className="space-y-2">
                   <Label>Tháng</Label>
-                  <Input type="month" className="rounded-xl" value={newJar.month} onChange={(event) => jarForm.setValue('month', event.target.value, { shouldValidate: true })} />
+                  <MonthPicker
+                    month={newJar.month}
+                    onChange={(value) => jarForm.setValue('month', value, { shouldValidate: true })}
+                    className="h-11 w-full bg-white font-medium"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label>Mục tiêu để dành</Label>
-                  <Input type="number" min="1" className="rounded-xl" value={newJar.target_amount} aria-invalid={Boolean(jarForm.formState.errors.target_amount)} onChange={(event) => jarForm.setValue('target_amount', event.target.value, { shouldValidate: true })} />
+                  <Label htmlFor="jar-target">Mục tiêu để dành</Label>
+                  <Input id="jar-target" type="number" min="1" className="tabular-nums" value={newJar.target_amount} aria-invalid={Boolean(jarForm.formState.errors.target_amount)} onChange={(event) => jarForm.setValue('target_amount', event.target.value, { shouldValidate: true })} />
                   {jarForm.formState.errors.target_amount?.message ? <p role="alert" className="text-xs text-red-600">{jarForm.formState.errors.target_amount.message}</p> : null}
                 </div>
-                <Button type="submit" className="w-full rounded-xl">Lưu</Button>
+                <Button type="submit" className="h-11 w-full rounded-xl font-semibold">Lưu</Button>
               </form>
             </DialogContent>
           </Dialog>

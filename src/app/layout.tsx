@@ -16,9 +16,12 @@ export const metadata: Metadata = {
     title: "ARC Irobot",
   },
   icons: {
-    icon: "/arc-irobot.png",
-    shortcut: "/arc-irobot.png",
-    apple: "/arc-irobot.png",
+    icon: [
+      { url: "/pwa-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/pwa-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    shortcut: "/pwa-192.png",
+    apple: "/pwa-192.png",
   },
 };
 

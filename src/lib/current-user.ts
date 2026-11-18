@@ -91,18 +91,20 @@ function getCachedDevelopmentUser() {
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
-  if (!isGoogleAuthConfigured()) {
+  const session = await auth();
+  if (session?.user?.id && session.user.email) {
+    return {
+      id: Number(session.user.id),
+      email: session.user.email,
+      name: session.user.name || session.user.email,
+      image: session.user.image || '',
+      isDevelopmentUser: false,
+    };
+  }
+
+  if (!isGoogleAuthConfigured() && process.env.NODE_ENV !== 'production') {
     return getCachedDevelopmentUser();
   }
 
-  const session = await auth();
-  if (!session?.user?.id || !session.user.email) return null;
-
-  return {
-    id: Number(session.user.id),
-    email: session.user.email,
-    name: session.user.name || session.user.email,
-    image: session.user.image || '',
-    isDevelopmentUser: false,
-  };
+  return null;
 }

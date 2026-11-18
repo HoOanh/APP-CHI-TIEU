@@ -3,6 +3,7 @@
 import * as React from "react"
 import * as PopoverPrimitive from "radix-ui/popover"
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react"
+import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 
 interface DatePickerProps {
@@ -41,8 +42,8 @@ export function DatePicker({ id, value, onChange, label, placeholder = "Chọn n
   const days = Array.from({ length: 42 }, (_, index) => new Date(month.getFullYear(), month.getMonth(), index - firstWeekday + 1))
 
   return (
-    <div className="min-w-0">
-      {label ? <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-slate-700">{label}</label> : null}
+    <div className="min-w-0 space-y-2">
+      {label ? <Label htmlFor={id}>{label}</Label> : null}
       <PopoverPrimitive.Root open={open} onOpenChange={(nextOpen) => {
         if (nextOpen) {
           const selected = parseDate(value)
@@ -51,8 +52,8 @@ export function DatePicker({ id, value, onChange, label, placeholder = "Chọn n
         setOpen(nextOpen)
       }}>
         <PopoverPrimitive.Trigger asChild>
-          <button id={id} type="button" disabled={disabled} aria-label={label || "Chọn ngày"} aria-invalid={invalid || undefined} className={cn("flex h-11 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm text-slate-800 shadow-sm outline-none transition hover:border-slate-400 focus-visible:border-emerald-700 focus-visible:ring-2 focus-visible:ring-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-red-600 aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-red-600/15", className)}>
-            <span className={cn(!value && "text-slate-500")}>{formattedValue}</span>
+          <button id={id} type="button" disabled={disabled} aria-label={label || "Chọn ngày"} aria-invalid={invalid || undefined} className={cn("flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-input bg-white px-3 text-left text-base text-foreground shadow-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-3 aria-[invalid=true]:ring-destructive/20 md:text-sm", className)}>
+            <span className={cn("truncate", !value && "text-muted-foreground")}>{formattedValue}</span>
             <CalendarDays aria-hidden className="size-4 shrink-0 text-slate-500" />
           </button>
         </PopoverPrimitive.Trigger>

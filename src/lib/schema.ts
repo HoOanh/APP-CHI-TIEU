@@ -9,6 +9,7 @@ export async function initializeDatabase(db: Client) {
       email TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL DEFAULT '',
       avatar TEXT DEFAULT '',
+      password_hash TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -263,6 +264,7 @@ async function addColumnIfMissing(
 }
 
 async function migrateLegacyTables(db: Client) {
+  await addColumnIfMissing(db, 'users', 'password_hash', 'TEXT');
   await addColumnIfMissing(db, 'categories', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE CASCADE');
   await addColumnIfMissing(db, 'expenses', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE CASCADE');
   await addColumnIfMissing(db, 'debts', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE CASCADE');

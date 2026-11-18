@@ -152,18 +152,18 @@ export default function DebtsPage() {
               Không có công nợ nào đang trả.
             </div>
           ) : <>
-            <div className="grid gap-4 xl:hidden">{activeDebts.map((debt) => {
+            <div className="grid min-w-0 gap-4 xl:hidden">{activeDebts.map((debt) => {
               const progress = getPercentage(debt.paid_amount, debt.total_amount);
               const daysRemaining = calculateDaysRemaining(debt.due_date);
               
               return (
-                <Link href={`/debts/${debt.id}`} key={debt.id} className="block">
+                <Link href={`/debts/${debt.id}`} key={debt.id} className="block min-w-0">
                   <Card className="rounded-2xl border-border bg-white hover:bg-slate-50/80 transition-colors shadow-sm cursor-pointer group">
                     <CardContent className="p-4">
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <h3 className="font-semibold text-base group-hover:text-primary transition-colors">{debt.name}</h3>
-                          <p className="text-xs text-muted-foreground">{debt.creditor}</p>
+                      <div className="mb-3 flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate font-semibold text-base group-hover:text-primary transition-colors">{debt.name}</h3>
+                          <p className="truncate text-xs text-muted-foreground">{debt.creditor}</p>
                         </div>
                         <Badge variant="outline" className={cn(
                           "rounded-full text-[10px] font-medium border-0",
@@ -238,47 +238,53 @@ export default function DebtsPage() {
             <Plus className="h-6 w-6" />
           </Button>
         </DialogTrigger>
-        <DialogContent className="rounded-2xl max-w-md mx-auto sm:max-w-[425px]">
-          <DialogHeader>
+        <DialogContent className="grid max-h-[calc(100dvh-1rem)] w-[min(480px,calc(100vw-1rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(480px,calc(100vw-2rem))]">
+          <DialogHeader className="border-b border-slate-200 px-5 py-4 pr-14">
             <DialogTitle>Thêm khoản nợ mới</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit(handleAddDebt)} className="mt-4 space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="name">Tên khoản nợ</Label>
-              <Input id="name" className="rounded-xl" placeholder="VD: Mua xe, Trả góp nhà..." aria-invalid={Boolean(errors.name)} {...register('name')} />
-              {errors.name ? <FieldError message={errors.name.message} /> : null}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="creditor">Chủ nợ / Ngân hàng</Label>
-              <Input id="creditor" className="rounded-xl" placeholder="VD: Vietcombank, Anh Tâm..." aria-invalid={Boolean(errors.creditor)} {...register('creditor')} />
-              {errors.creditor ? <FieldError message={errors.creditor.message} /> : null}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="total_amount">Tổng số tiền</Label>
-              <Input id="total_amount" type="text" inputMode="numeric" className="rounded-xl" placeholder="100.000" aria-invalid={Boolean(errors.total_amount)} value={debtForm.total_amount} onChange={(event) => setValue('total_amount', event.target.value.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.'), { shouldValidate: true })} />
-              {errors.total_amount ? <FieldError message={errors.total_amount.message} /> : null}
-            </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <form onSubmit={handleSubmit(handleAddDebt)} noValidate className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
+            <div className="min-h-0 space-y-4 overflow-y-auto px-5 py-5">
               <div className="space-y-2">
-                <DatePicker id="start_date" label="Ngày bắt đầu" value={debtForm.start_date} onChange={(value) => setValue('start_date', value, { shouldValidate: true })} invalid={Boolean(errors.start_date)} />
-                {errors.start_date ? <FieldError message={errors.start_date.message} /> : null}
+                <Label htmlFor="name">Tên khoản nợ</Label>
+                <Input id="name" placeholder="VD: Mua xe, Trả góp nhà..." aria-invalid={Boolean(errors.name)} {...register('name')} />
+                {errors.name ? <FieldError message={errors.name.message} /> : null}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="interest_rate">Lãi suất (%)</Label>
-                <Input id="interest_rate" type="number" min="0" step="0.1" className="rounded-xl" placeholder="0" {...register('interest_rate')} />
+                <Label htmlFor="creditor">Chủ nợ / Ngân hàng</Label>
+                <Input id="creditor" placeholder="VD: Vietcombank, Anh Tâm..." aria-invalid={Boolean(errors.creditor)} {...register('creditor')} />
+                {errors.creditor ? <FieldError message={errors.creditor.message} /> : null}
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="total_amount">Tổng số tiền</Label>
+                  <Input id="total_amount" type="text" inputMode="numeric" className="tabular-nums" placeholder="100.000" aria-invalid={Boolean(errors.total_amount)} value={debtForm.total_amount} onChange={(event) => setValue('total_amount', event.target.value.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.'), { shouldValidate: true })} />
+                  {errors.total_amount ? <FieldError message={errors.total_amount.message} /> : null}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="interest_rate">Lãi suất (%)</Label>
+                  <Input id="interest_rate" type="number" min="0" step="0.1" className="tabular-nums" placeholder="0" {...register('interest_rate')} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <DatePicker id="start_date" label="Ngày bắt đầu" value={debtForm.start_date} onChange={(value) => setValue('start_date', value, { shouldValidate: true })} invalid={Boolean(errors.start_date)} />
+                  {errors.start_date ? <FieldError message={errors.start_date.message} /> : null}
+                </div>
+                <div className="space-y-2">
+                  <DatePicker id="due_date" label="Hạn trả" value={debtForm.due_date} min={debtForm.start_date} onChange={(value) => setValue('due_date', value, { shouldValidate: true })} invalid={Boolean(errors.due_date)} />
+                  {errors.due_date ? <FieldError message={errors.due_date.message} /> : null}
+                </div>
               </div>
               <div className="space-y-2">
-                <DatePicker id="due_date" label="Hạn trả" value={debtForm.due_date} min={debtForm.start_date} onChange={(value) => setValue('due_date', value, { shouldValidate: true })} invalid={Boolean(errors.due_date)} />
-                {errors.due_date ? <FieldError message={errors.due_date.message} /> : null}
+                <Label htmlFor="debt-note">Ghi chú</Label>
+                <Input id="debt-note" placeholder="Thêm thông tin nếu cần" {...register('note')} />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="debt-note">Ghi chú</Label>
-              <Input id="debt-note" className="rounded-xl" {...register('note')} />
+            <div className="border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
+              <Button type="submit" disabled={isSubmitting} className="h-11 w-full rounded-xl font-semibold">
+                Thêm công nợ
+              </Button>
             </div>
-            <Button type="submit" disabled={isSubmitting} className="mt-4 w-full rounded-xl">
-              Thêm công nợ
-            </Button>
           </form>
         </DialogContent>
       </Dialog>

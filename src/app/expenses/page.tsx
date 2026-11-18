@@ -120,7 +120,7 @@ export default function ExpensesPage() {
         <div className="flex items-center justify-between gap-3">
           <div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Dòng tiền</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Chi tiêu & thu nhập</h1></div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="relative hidden lg:block"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-500" /><Input aria-label="Tìm giao dịch" placeholder="Tìm nội dung, ghi chú" value={search} onChange={(event) => setSearch(event.target.value)} className="w-52 bg-white pl-9" /></div><MonthPicker month={month} onChange={setMonth} /><ManualTransactionDialog compact onSaved={() => fetchExpenses()} /></div>
+            <div className="relative hidden lg:block"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-500" /><Input aria-label="Tìm giao dịch" placeholder="Tìm nội dung, ghi chú" value={search} onChange={(event) => setSearch(event.target.value)} className="h-9 w-52 bg-white pl-9" /></div><MonthPicker month={month} onChange={setMonth} /><ManualTransactionDialog compact onSaved={() => fetchExpenses()} /></div>
         </div>
         <section className="mt-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 md:mt-5 md:grid md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-center md:gap-8 md:px-6 md:py-5">
           <div className="min-w-0">

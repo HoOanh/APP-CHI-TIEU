@@ -1,7 +1,14 @@
 const CACHE_PREFIX = 'arc-irobot-';
-const STATIC_CACHE = `${CACHE_PREFIX}static-v2`;
+const STATIC_CACHE = `${CACHE_PREFIX}static-v3`;
 const OFFLINE_URL = '/offline.html';
-const APP_ASSETS = [OFFLINE_URL, '/arc-irobot.png', '/pwa-icon.svg', '/manifest.webmanifest'];
+const APP_ASSETS = [
+  OFFLINE_URL,
+  '/arc-irobot.png',
+  '/pwa-192.png',
+  '/pwa-512.png',
+  '/pwa-icon.svg',
+  '/manifest.webmanifest',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -41,6 +48,9 @@ self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(request.url);
   if (requestUrl.origin !== self.location.origin) return;
 
+  const isLocalDev =
+    self.location.hostname === 'localhost' || self.location.hostname === '127.0.0.1';
+
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request).catch(async () => {
@@ -52,9 +62,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  if (isLocalDev) return;
+
   const isNextStaticAsset = requestUrl.pathname.startsWith('/_next/static/');
   const isAppAsset = [
     '/arc-irobot.png',
+    '/pwa-192.png',
+    '/pwa-512.png',
     '/favicon.ico',
     '/icon.png',
     '/manifest.webmanifest',
@@ -80,7 +94,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let notification = {
     title: 'ARC Irobot',
-    body: 'Có cập nhật mới cho ĐẠI CA.',
+    body: 'Có cập nhật mới cho đại ca.',
     url: '/',
     tag: 'arc-irobot-notification',
   };
@@ -99,26 +113,31 @@ self.addEventListener('push', (event) => {
     self.location.origin,
   );
   const safeUrl = target.origin === self.location.origin ? target.href : self.location.origin;
-  event.waitUntil(self.registration.showNotification(notification.title, {
-    body: notification.body,
-    icon: '/arc-irobot.png',
-    badge: '/pwa-icon.svg',
-    tag: notification.tag,
-    data: { url: safeUrl },
-  }));
+  event.waitUntil(
+    self.registration.showNotification(notification.title, {
+      body: notification.body,
+      icon: '/pwa-192.png',
+      badge: '/pwa-192.png',
+      tag: notification.tag,
+      data: { url: safeUrl },
+    }),
+  );
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = event.notification.data && typeof event.notification.data.url === 'string'
-    ? event.notification.data.url
-    : '/';
-  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-    for (const client of clients) {
-      if ('focus' in client && new URL(client.url).origin === self.location.origin) {
-        return client.navigate(target).then(() => client.focus());
+  const target =
+    event.notification.data && typeof event.notification.data.url === 'string'
+      ? event.notification.data.url
+      : '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client && new URL(client.url).origin === self.location.origin) {
+          return client.navigate(target).then(() => client.focus());
+        }
       }
-    }
-    return self.clients.openWindow(target);
-  }));
+      return self.clients.openWindow(target);
+    }),
+  );
 });

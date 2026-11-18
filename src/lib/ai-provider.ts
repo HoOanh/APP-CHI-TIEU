@@ -151,6 +151,9 @@ export async function callConfiguredAi(
 ): Promise<string | null> {
   const config = await getActiveAiModel(userId);
   if (!config) return null;
+  if (images.some((item) => item.mimeType.startsWith('audio/')) && config.protocol !== 'gemini') {
+    return null;
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {

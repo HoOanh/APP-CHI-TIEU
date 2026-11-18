@@ -3,8 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import dynamic from 'next/dynamic';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import {
   CirclePlus,
@@ -23,12 +22,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useToast } from '@/hooks/useToast';
 import { syncOfflineTransactions } from '@/lib/offline-queue';
 import { cn, formatCurrency, getCurrentMonth } from '@/lib/utils';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { LinkPending } from '@/components/LinkPending';
-
-const TransactionChat = dynamic(() => import('@/components/TransactionChat').then((module) => module.TransactionChat), {
-  loading: () => <p role="status" className="p-6 text-sm text-muted-foreground">Đang mở Ghi nhanh…</p>,
-});
 
 interface AppShellUser {
   name: string;
@@ -47,6 +41,8 @@ interface BudgetAlertResponse {
   budget_amount: number;
   category_name: string;
   spent_amount: number;
+  today_spent?: number;
+  effective_daily_limit?: number;
 }
 
 const desktopNavigation = [
@@ -70,12 +66,10 @@ function getInitials(name: string) {
 
 export function AppShell({ children, user }: AppShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const hasCheckedBudgetAlerts = useRef(false);
   const { showToast } = useToast();
   const isPublicRoute = pathname.startsWith('/login');
-  const quickButtonRef = useRef<HTMLButtonElement>(null);
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [quickBusy, setQuickBusy] = useState(false);
   const isChatRoute = pathname === '/chat' || pathname === '/debt-chat';
 
   useEffect(() => {
@@ -86,17 +80,26 @@ export function AppShell({ children, user }: AppShellProps) {
       const response = await fetch(`/api/dashboard/budget-alerts?month=${getCurrentMonth()}`);
       if (!response.ok) return;
       const alerts: BudgetAlertResponse[] = await response.json();
-      alerts
-        .filter((alert) => Number(alert.spent_amount) >= Number(alert.budget_amount))
-        .forEach((alert) => {
-          const spent = Number(alert.spent_amount);
-          const limit = Number(alert.budget_amount);
+      alerts.forEach((alert) => {
+        const spent = Number(alert.spent_amount) || 0;
+        const limit = Number(alert.budget_amount) || 0;
+        const todaySpent = Number(alert.today_spent) || 0;
+        const dailyLimit = Number(alert.effective_daily_limit) || 0;
+
+        if (limit > 0 && spent >= limit) {
           showToast(
-            `Chi hố vãi — ${alert.category_name} đã thủng ngân sách`,
+            `🚨 THỦNG NGÂN SÁCH THÁNG — ${alert.category_name}`,
             'error',
-            `Đã chi ${formatCurrency(spent)}/${formatCurrency(limit)}, thủng ${formatCurrency(spent - limit)}. Khoản đã chi không cứu được; giờ bớt vung tay với các khoản sau.`,
+            `Đã chi ${formatCurrency(spent)}/${formatCurrency(limit)}${spent > limit ? `, lố ${formatCurrency(spent - limit)}` : ''}. Bớt vung tay ngay đại ca!`,
           );
-        });
+        } else if (dailyLimit > 0 && todaySpent > dailyLimit) {
+          showToast(
+            `🚨 CHI LỐ HẠN MỨC NGÀY — ${alert.category_name}`,
+            'error',
+            `Hôm nay đã chi ${formatCurrency(todaySpent)}/${formatCurrency(dailyLimit)} (vượt lố ${formatCurrency(todaySpent - dailyLimit)}). Dừng chi hũ này hôm nay nhé!`,
+          );
+        }
+      });
     };
 
     void notifyBudgetStatus();
@@ -136,11 +139,11 @@ export function AppShell({ children, user }: AppShellProps) {
         || !(event.target instanceof HTMLElement)
         || event.target.closest('input, textarea, select, [contenteditable], [role="dialog"]')) return;
       event.preventDefault();
-      setQuickOpen(true);
+      router.push('/chat');
     };
     window.addEventListener('keydown', openQuickCapture);
     return () => window.removeEventListener('keydown', openQuickCapture);
-  }, [isChatRoute, isPublicRoute]);
+  }, [isChatRoute, isPublicRoute, router]);
 
   if (isPublicRoute) {
     return <main className="min-h-dvh">{children}</main>;
@@ -155,17 +158,16 @@ export function AppShell({ children, user }: AppShellProps) {
         </Link>
 
         <div className="px-2 lg:px-3">
-          <button
-            type="button"
-            ref={quickButtonRef}
-            onClick={() => setQuickOpen(true)}
+          <Link
+            href="/chat"
             aria-label="Ghi giao dịch nhanh"
+            aria-current={pathname === '/chat' ? 'page' : undefined}
             className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 lg:justify-start"
           >
             <CirclePlus className="size-4 shrink-0" />
             <span className="hidden flex-1 text-left lg:inline">Ghi nhanh</span>
             <kbd className="hidden rounded border border-white/30 px-1.5 py-0.5 text-[10px] lg:inline">N</kbd>
-          </button>
+          </Link>
         </div>
 
         <nav aria-label="Điều hướng chính" className="mt-5 flex-1 space-y-1 px-2 lg:px-3">
@@ -190,16 +192,64 @@ export function AppShell({ children, user }: AppShellProps) {
         <main className={cn('app-content mx-auto min-h-dvh w-full', !isChatRoute && 'max-w-[1440px]')}>{children}</main>
       </div>
       <BottomNav user={user} />
-      <Dialog open={quickOpen} onOpenChange={(open) => { if (open || !quickBusy) setQuickOpen(open); }}>
-        <DialogContent showCloseButton={!quickBusy} onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          quickButtonRef.current?.focus();
-        }} className="block w-[min(620px,calc(100vw-2rem))] overflow-hidden p-0">
-          <DialogTitle className="sr-only">Ghi nhanh</DialogTitle>
-          <DialogDescription className="sr-only">Ghi giao dịch ngay trên màn hình hiện tại.</DialogDescription>
-          {quickOpen && <TransactionChat embedded onBusyChange={setQuickBusy} />}
-        </DialogContent>
-      </Dialog>
+      <AppBootLoader />
+    </div>
+  );
+}
+
+function AppBootLoader() {
+  const [visible, setVisible] = useState(true);
+  const [fading, setFading] = useState(false);
+
+  useEffect(() => {
+    const fadeTimer = window.setTimeout(() => {
+      setFading(true);
+    }, 180);
+    const hideTimer = window.setTimeout(() => {
+      setVisible(false);
+    }, 480);
+
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(hideTimer);
+    };
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Đang khởi tạo ứng dụng"
+      className={cn(
+        'fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#f1f5f9] px-6 text-center transition-opacity duration-300',
+        fading && 'pointer-events-none opacity-0',
+      )}
+    >
+      <div className="relative flex size-24 items-center justify-center rounded-[28px] border border-emerald-100 bg-white shadow-[0_22px_50px_-20px_rgba(0,188,124,0.45)]">
+        <span
+          aria-hidden
+          className="voice-ripple-ring absolute inset-1 rounded-[26px] border-2 border-[#00bc7c]/30"
+        />
+        <Image
+          src="/arc-irobot.png"
+          alt="ARC Irobot"
+          width={68}
+          height={52}
+          priority
+          className="h-auto w-15 object-contain"
+        />
+      </div>
+      <p className="mt-5 text-base font-semibold tracking-tight text-slate-800">
+        ARC Irobot · Sổ chi tiêu
+      </p>
+      <p className="mt-1 text-xs text-slate-500">
+        Đang tải dữ liệu tài chính…
+      </p>
+      <div className="mt-4 h-1.5 w-44 overflow-hidden rounded-full bg-emerald-100">
+        <div className="h-full w-2/3 animate-pulse rounded-full bg-[#00bc7c]" />
+      </div>
     </div>
   );
 }

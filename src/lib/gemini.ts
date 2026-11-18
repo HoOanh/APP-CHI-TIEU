@@ -444,3 +444,28 @@ Chỉ trả về JSON hợp lệ.`;
     amount: Math.abs(Number(parsed.amount)) || 0,
   };
 }
+
+export async function transcribeAudio(
+  base64Data: string,
+  mimeType: string,
+  userId?: number,
+): Promise<string> {
+  const cleanMimeType = mimeType.split(';')[0].trim() || 'audio/webm';
+  const prompt = `Nghe đoạn âm thanh tiếng Việt này và chép lại CHÍNH XÁC nội dung người dùng vừa nói (thường là ghi chép thu/chi tài chính như "ăn trưa 50k", "cà phê 35 nghìn", "nhận lương 15 triệu").
+Quy tắc bắt buộc:
+- Chỉ trả về đúng câu chữ tiếng Việt nghe được, ưu tiên viết số tiền gọn rõ (ví dụ: 50k, 100 nghìn, 15 triệu).
+- Tuyệt đối KHÔNG thêm giải thích, không bọc dấu ngoặc kép, không markdown.
+- Nếu đoạn âm thanh chỉ có tiếng ồn hoặc im lặng không có lời nói, trả về duy nhất từ: EMPTY`;
+
+  const text = await callGeminiWithFallback(
+    [
+      prompt,
+      { inlineData: { data: base64Data, mimeType: cleanMimeType } },
+    ],
+    userId,
+  );
+
+  const cleaned = text.trim().replace(/^["'“”`]+|["'“”`]+$/g, '').trim();
+  if (!cleaned || /^empty$/i.test(cleaned)) return '';
+  return cleaned;
+}

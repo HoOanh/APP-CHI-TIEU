@@ -8,7 +8,7 @@ Quản lý chi tiêu thông minh với sức mạnh của AI (Gemini). Nhập d�
 - 🗂️ **Quản lý Hũ ngân sách**: Đặt ngân sách cho từng danh mục và nhận cảnh báo khi sắp vượt mức.
 - 💳 **Quản lý công nợ**: Theo dõi các khoản vay/cho vay, tiến độ trả nợ.
 - ⚡ **Chat AI trả nợ nhanh**: Cập nhật tiến độ trả nợ nhanh chóng qua chat.
-- 🔒 **Đăng nhập Google**: Bảo mật an toàn với NextAuth.js.
+- 🔒 **Tài khoản an toàn**: Đăng ký/đăng nhập bằng email và mật khẩu; Google OAuth là lựa chọn bổ sung.
 - 📱 **Mobile-First UX**: Trải nghiệm mượt mà trên mọi thiết bị.
 
 ## 🛠️ Công nghệ sử dụng
@@ -45,8 +45,8 @@ cp .env.example .env
 | `GEMINI_API_KEY` | Có | API Key từ Google AI Studio |
 | `NEXTAUTH_URL` | Có | URL của ứng dụng (vd: http://localhost:3000) |
 | `NEXTAUTH_SECRET` | Có | Khóa bí mật cho NextAuth (tạo ngẫu nhiên) |
-| `GOOGLE_CLIENT_ID` | Có | Client ID cho Google OAuth |
-| `GOOGLE_CLIENT_SECRET` | Có | Client Secret cho Google OAuth |
+| `GOOGLE_CLIENT_ID` | Không | Client ID cho Google OAuth (tùy chọn) |
+| `GOOGLE_CLIENT_SECRET` | Không | Client Secret cho Google OAuth (tùy chọn) |
 
 ### 3. Chạy ứng dụng
 ```bash

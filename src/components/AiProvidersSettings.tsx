@@ -315,21 +315,21 @@ export function AiProvidersSettings() {
             <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)_auto]">
               <Input value={(providerEdits[provider.id] || { label: provider.label, base_url: provider.base_url }).label} onChange={(event) => setProviderEdits((current) => ({ ...current, [provider.id]: { ...(current[provider.id] || { label: provider.label, base_url: provider.base_url }), label: event.target.value } }))} aria-label="Tên provider" className="h-10 rounded-xl" />
               <Input value={(providerEdits[provider.id] || { label: provider.label, base_url: provider.base_url }).base_url} onChange={(event) => setProviderEdits((current) => ({ ...current, [provider.id]: { ...(current[provider.id] || { label: provider.label, base_url: provider.base_url }), base_url: event.target.value } }))} aria-label="Base URL provider" className="h-10 rounded-xl" />
-              <Button type="button" variant="outline" disabled={busy === `details:${provider.id}`} onClick={() => saveProviderDetails(provider)}>Lưu thông tin</Button>
+              <Button type="button" variant="outline" className="h-10 rounded-xl" disabled={busy === `details:${provider.id}`} onClick={() => saveProviderDetails(provider)}>Lưu thông tin</Button>
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
               <Input type="password" autoComplete="new-password" value={keyEdits[provider.id] || ''} onChange={(event) => setKeyEdits((current) => ({ ...current, [provider.id]: event.target.value }))} placeholder="Nhập key mới để thay thế" className="h-10 rounded-xl" />
-              <Button type="button" variant="outline" disabled={!keyEdits[provider.id]?.trim() || busy === `key:${provider.id}`} onClick={() => saveKey(provider)}>Cập nhật key</Button>
+              <Button type="button" variant="outline" className="h-10 rounded-xl" disabled={!keyEdits[provider.id]?.trim() || busy === `key:${provider.id}`} onClick={() => saveKey(provider)}>Cập nhật key</Button>
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" size="sm" disabled={busy === `discover:${provider.id}`} onClick={() => discoverModels(provider)}>
+              <Button type="button" variant="outline" size="sm" className="h-9 rounded-xl" disabled={busy === `discover:${provider.id}`} onClick={() => discoverModels(provider)}>
                 {busy === `discover:${provider.id}` ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} Tải danh sách model
               </Button>
               <div className="flex min-w-0 flex-1 gap-2 sm:max-w-md">
                 <Input value={manualModel} onChange={(event) => setManualModel(event.target.value)} placeholder="Hoặc nhập model ID" className="h-9 rounded-xl" />
-                <Button type="button" size="sm" disabled={!manualModel.trim()} onClick={() => saveModels(provider, [{ model_id: manualModel.trim(), label: manualModel.trim() }])}><Plus className="size-4" /> Thêm</Button>
+                <Button type="button" size="sm" className="h-9 rounded-xl" disabled={!manualModel.trim()} onClick={() => saveModels(provider, [{ model_id: manualModel.trim(), label: manualModel.trim() }])}><Plus className="size-4" /> Thêm</Button>
               </div>
             </div>
 

@@ -61,6 +61,7 @@ import {
   MoreVertical,
   Wallet,
   AlertTriangle,
+  Siren,
   Clock,
   CalendarDays,
   Edit,
@@ -497,21 +498,66 @@ export default function BudgetsPage() {
             </Button>
           </div>
         ) : <>
+          {budgets.some((budget) => budget.alerts?.some((alert) => alert.severity === 'danger') || budget.spent_amount >= budget.budget_amount) ? (
+            <section
+              role="alert"
+              className="overspend-card-pulse rounded-2xl border-2 border-rose-500 bg-rose-600 p-4 text-white shadow-[0_18px_42px_-14px_rgba(225,29,72,0.75)]"
+            >
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-white/20 text-white">
+                  <Siren className="size-5 animate-bounce" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold uppercase tracking-wide text-white">
+                    Cảnh báo khẩn: Hũ chi tiêu đang bị lố định mức!
+                  </p>
+                  <div className="mt-1.5 space-y-1">
+                    {budgets
+                      .filter((budget) => budget.alerts?.some((alert) => alert.severity === 'danger') || budget.spent_amount >= budget.budget_amount)
+                      .map((budget) => {
+                        const dangerAlert = budget.alerts?.find((alert) => alert.severity === 'danger');
+                        return (
+                          <p key={budget.id} className="break-words text-xs font-medium leading-5 text-rose-50">
+                            • <strong className="font-bold text-white">{budget.category_name}:</strong>{' '}
+                            {dangerAlert ? dangerAlert.message : `Đã chi ${formatCurrency(budget.spent_amount)} / ${formatCurrency(budget.budget_amount)}`}
+                          </p>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
           <div className="grid gap-4 lg:grid-cols-2 xl:hidden">
             {budgets.map((budget) => {
               const pct = getPercentage(
                 budget.spent_amount,
                 budget.budget_amount,
               );
-              const isWarning = pct >= budget.warning_percent && pct < 100;
+              const effectiveDailyLimit = budget.daily_limit > 0
+                ? budget.daily_limit
+                : budget.budget_basis === 'daily'
+                  ? budget.daily_amount
+                  : 0;
+              const isDailyOver = effectiveDailyLimit > 0 && budget.today_spent > effectiveDailyLimit;
               const isOver = pct >= 100;
+              const hasDanger = isOver || isDailyOver || Boolean(budget.alerts?.some((alert) => alert.severity === 'danger'));
+              const isWarning = !hasDanger && (pct >= budget.warning_percent || Boolean(budget.alerts?.some((alert) => alert.severity === 'warning')));
               const hasLimits =
-                budget.daily_limit > 0 || budget.frequency_limit > 0;
+                effectiveDailyLimit > 0 || budget.frequency_limit > 0;
 
               return (
                 <Card
                   key={budget.id}
-                  className="rounded-2xl border-border bg-card overflow-hidden shadow-sm"
+                  className={cn(
+                    'overflow-hidden rounded-2xl shadow-sm transition-all',
+                    hasDanger
+                      ? 'overspend-card-pulse border-2 border-rose-500 bg-rose-50/40'
+                      : isWarning
+                        ? 'border-2 border-amber-300 bg-amber-50/20'
+                        : 'border-border bg-card',
+                  )}
                 >
                   <CardContent className="p-4">
                     {/* Header row */}
@@ -522,24 +568,29 @@ export default function BudgetsPage() {
                           color={budget.category_color}
                         />
                         <div>
-                          <p className="font-medium">{budget.category_name}</p>
+                          <p className="font-semibold text-foreground">{budget.category_name}</p>
                           <p className="text-xs text-muted-foreground tabular-nums">
                             {formatCurrency(budget.spent_amount)} /{' '}
                             {formatCurrency(budget.budget_amount)}
                           </p>
-                          {budget.budget_basis === 'daily' ? <p className="mt-1 text-[11px] text-blue-600">{formatCurrency(budget.daily_amount)} / ngày × {budget.budget_days} ngày</p> : null}
+                          {budget.budget_basis === 'daily' ? <p className={cn('mt-1 text-[11px] font-medium', isDailyOver ? 'text-rose-600' : 'text-blue-600')}>{formatCurrency(budget.daily_amount)} / ngày × {budget.budget_days} ngày</p> : null}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
+                        {hasDanger ? (
+                          <Badge variant="destructive" className="rounded-lg bg-rose-600 px-2 py-0.5 text-[11px] font-bold text-white">
+                            {isOver ? '🚨 Vượt tháng' : '🚨 Lố ngày'}
+                          </Badge>
+                        ) : null}
                         <Badge
                           variant="secondary"
                           className={cn(
                             'rounded-lg font-semibold tabular-nums',
-                            isOver
-                              ? 'bg-rose-500/10 text-rose-500'
+                            hasDanger
+                              ? 'bg-rose-500/15 text-rose-700'
                               : isWarning
-                                ? 'bg-amber-500/10 text-amber-500'
-                                : 'bg-emerald-500/10 text-emerald-500',
+                                ? 'bg-amber-500/15 text-amber-700'
+                                : 'bg-emerald-500/10 text-emerald-600',
                           )}
                         >
                           {Math.round(pct)}%
@@ -577,12 +628,12 @@ export default function BudgetsPage() {
 
                     {/* Progress bar */}
                     <Progress
-                      value={pct}
-                      className="h-2 rounded-full bg-secondary"
+                      value={isDailyOver && pct < 100 ? Math.max(pct, 100) : pct}
+                      className="h-2.5 rounded-full bg-secondary"
                       indicatorColor={cn(
                         'rounded-full transition-all duration-500',
-                        isOver
-                          ? 'bg-rose-500'
+                        hasDanger
+                          ? 'bg-rose-600'
                           : isWarning
                             ? 'bg-amber-500'
                             : 'bg-emerald-500',
@@ -592,22 +643,27 @@ export default function BudgetsPage() {
                     {/* Limit badges */}
                     {hasLimits && (
                       <div className="flex flex-wrap gap-2 mt-3">
-                        {budget.daily_limit > 0 && (
-                          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-600 text-[11px] font-medium">
+                        {effectiveDailyLimit > 0 && (
+                          <div className={cn(
+                            'flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold',
+                            isDailyOver
+                              ? 'border border-rose-300 bg-rose-100 text-rose-700'
+                              : 'bg-blue-500/10 text-blue-600',
+                          )}>
                             <CalendarDays className="w-3 h-3" />
                             <span>
-                              {formatCurrency(budget.daily_limit)}/ngày
+                              Định mức: {formatCurrency(effectiveDailyLimit)}/ngày
                             </span>
                             {budget.today_spent > 0 && (
                               <span
                                 className={cn(
-                                  'ml-1',
-                                  budget.today_spent >= budget.daily_limit
-                                    ? 'text-rose-500'
+                                  'ml-1 font-bold',
+                                  isDailyOver
+                                    ? 'text-rose-700'
                                     : '',
                                 )}
                               >
-                                ({formatCurrency(budget.today_spent)} đã chi)
+                                (Hôm nay: {formatCurrency(budget.today_spent)}{isDailyOver ? ` · Lố ${formatCurrency(budget.today_spent - effectiveDailyLimit)}` : ''})
                               </span>
                             )}
                           </div>
@@ -636,23 +692,27 @@ export default function BudgetsPage() {
 
                     {/* Alert badges */}
                     {budget.alerts && budget.alerts.length > 0 && (
-                      <div className="space-y-1.5 mt-3">
+                      <div className="space-y-2 mt-3">
                         {budget.alerts.map((alert, idx) => (
                           <div
                             key={idx}
                             className={cn(
-                              'flex items-start gap-2.5 px-3 py-2.5 rounded-xl',
+                              'flex items-start gap-2.5 rounded-xl px-3.5 py-3',
                               alert.severity === 'danger'
-                                ? 'bg-rose-500/10 text-rose-600'
-                                : 'bg-amber-500/10 text-amber-600',
+                                ? 'border border-rose-400 bg-rose-600 text-white shadow-sm'
+                                : 'border border-amber-300 bg-amber-50 text-amber-800',
                             )}
                           >
-                            <AlertTriangle className="mt-0.5 w-3.5 h-3.5 flex-shrink-0" />
+                            {alert.severity === 'danger' ? (
+                              <Siren className="mt-0.5 size-4 shrink-0 animate-bounce text-white" />
+                            ) : (
+                              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                            )}
                             <div className="min-w-0">
-                              <p className="text-xs font-semibold">
+                              <p className="text-xs font-bold">
                                 {alert.title}
                               </p>
-                              <p className="mt-0.5 text-[11px] leading-4 opacity-85">
+                              <p className={cn('mt-0.5 text-[11px] leading-4', alert.severity === 'danger' ? 'font-medium text-rose-50' : 'opacity-90')}>
                                 {alert.message}
                               </p>
                             </div>
@@ -706,11 +766,16 @@ export default function BudgetsPage() {
                   }
                   disabled={Boolean(editingBudget)}
                 >
-                  <SelectTrigger className="h-12 w-full rounded-2xl bg-muted/40 px-4 text-base data-[size=default]:h-12">
+                  <SelectTrigger className="h-12 w-full rounded-xl bg-muted/40 px-3.5 text-base">
                     <SelectValue placeholder="Chọn danh mục chi tiêu">
                       {(() => {
                         const selectedCategory = categories.find((category) => String(category.id) === formData.category_id);
-                        return selectedCategory ? <><CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-7 rounded-lg" iconClassName="size-3.5" />{selectedCategory.name}</> : 'Chọn danh mục chi tiêu';
+                        return selectedCategory ? (
+                          <span className="inline-flex min-w-0 items-center gap-2.5">
+                            <CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-7 rounded-lg" iconClassName="size-3.5" />
+                            <span className="truncate font-medium">{selectedCategory.name}</span>
+                          </span>
+                        ) : 'Chọn danh mục chi tiêu';
                       })()}
                     </SelectValue>
                   </SelectTrigger>
@@ -968,5 +1033,85 @@ function getDaysInMonth(month: string) {
 }
 
 function BudgetTable({ budgets, onEdit, onDelete }: { budgets: Budget[]; onEdit: (budget: Budget) => void; onDelete: (id: string) => void }) {
-  return <section className="hidden overflow-hidden rounded-2xl border border-border bg-card xl:block"><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-6 py-3 font-medium">Danh mục</th><th className="px-4 py-3 font-medium">Đã chi</th><th className="px-4 py-3 font-medium">Ngân sách</th><th className="px-4 py-3 font-medium">Tỷ lệ</th><th className="px-4 py-3 font-medium">Trạng thái</th><th className="w-28 px-4 py-3" /></tr></thead><tbody className="divide-y divide-border">{budgets.map((budget) => { const pct = getPercentage(budget.spent_amount, budget.budget_amount); const tone = pct >= 100 ? 'text-rose-600' : pct >= budget.warning_percent ? 'text-amber-600' : 'text-emerald-600'; return <tr key={budget.id} className="group hover:bg-muted/30"><td className="px-6 py-4"><span className="inline-flex items-center gap-3"><CategoryIcon name={budget.category_name} color={budget.category_color} className="size-9 rounded-xl"/><span><span className="block font-semibold text-foreground">{budget.category_name}</span>{budget.budget_basis === 'daily' ? <span className="mt-0.5 block text-xs text-muted-foreground">{formatCurrency(budget.daily_amount)}/ngày × {budget.budget_days} ngày</span> : null}</span></span></td><td className="whitespace-nowrap px-4 py-4 font-medium tabular-nums text-foreground">{formatCurrency(budget.spent_amount)}</td><td className="whitespace-nowrap px-4 py-4 tabular-nums text-muted-foreground">{formatCurrency(budget.budget_amount)}</td><td className="min-w-48 px-4 py-4"><div className="flex items-center gap-3"><Progress value={pct} className="h-2 flex-1" indicatorColor={tone.replace('text-', 'bg-')} /><span className={cn('w-10 text-right text-xs font-semibold tabular-nums', tone)}>{Math.round(pct)}%</span></div></td><td className={cn('px-4 py-4 text-xs font-semibold', tone)}>{pct >= 100 ? 'Đã vượt mức' : pct >= budget.warning_percent ? 'Sắp chạm hạn mức' : 'Trong kế hoạch'}</td><td className="px-4 py-3"><div className="flex justify-end gap-1"><Button variant="ghost" size="sm" onClick={() => onEdit(budget)}>Sửa</Button><Button variant="ghost" size="icon-sm" aria-label={`Xóa ngân sách ${budget.category_name}`} onClick={() => onDelete(budget.id)} className="text-muted-foreground hover:text-rose-600"><Trash2 className="size-4"/></Button></div></td></tr>; })}</tbody></table></div></section>;
+  return (
+    <section className="hidden overflow-hidden rounded-2xl border border-border bg-card xl:block">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[900px] text-left text-sm">
+          <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-6 py-3 font-medium">Danh mục</th>
+              <th className="px-4 py-3 font-medium">Đã chi</th>
+              <th className="px-4 py-3 font-medium">Ngân sách</th>
+              <th className="px-4 py-3 font-medium">Tỷ lệ</th>
+              <th className="px-4 py-3 font-medium">Trạng thái</th>
+              <th className="w-28 px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {budgets.map((budget) => {
+              const pct = getPercentage(budget.spent_amount, budget.budget_amount);
+              const effectiveDailyLimit = budget.daily_limit > 0
+                ? budget.daily_limit
+                : budget.budget_basis === 'daily'
+                  ? budget.daily_amount
+                  : 0;
+              const isDailyOver = effectiveDailyLimit > 0 && budget.today_spent > effectiveDailyLimit;
+              const hasDanger = pct >= 100 || isDailyOver || Boolean(budget.alerts?.some((alert) => alert.severity === 'danger'));
+              const isWarning = !hasDanger && (pct >= budget.warning_percent || Boolean(budget.alerts?.some((alert) => alert.severity === 'warning')));
+              const tone = hasDanger ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-emerald-600';
+              const statusLabel = pct >= 100
+                ? '🚨 Đã vượt ngân sách tháng'
+                : isDailyOver
+                  ? `🚨 Lố định mức ngày (${formatCurrency(budget.today_spent)}/${formatCurrency(effectiveDailyLimit)})`
+                  : hasDanger
+                    ? '🚨 Vượt giới hạn'
+                    : isWarning
+                      ? '⚠️ Sắp chạm hạn mức'
+                      : 'Trong kế hoạch';
+
+              return (
+                <tr key={budget.id} className={cn('group transition-colors', hasDanger ? 'bg-rose-50/70 hover:bg-rose-100/60' : 'hover:bg-muted/30')}>
+                  <td className="px-6 py-4">
+                    <span className="inline-flex items-center gap-3">
+                      <CategoryIcon name={budget.category_name} color={budget.category_color} className="size-9 rounded-xl" />
+                      <span>
+                        <span className="block font-semibold text-foreground">{budget.category_name}</span>
+                        {budget.budget_basis === 'daily' ? (
+                          <span className={cn('mt-0.5 block text-xs', isDailyOver ? 'font-semibold text-rose-600' : 'text-muted-foreground')}>
+                            {formatCurrency(budget.daily_amount)}/ngày × {budget.budget_days} ngày
+                            {budget.today_spent > 0 ? ` · Hôm nay: ${formatCurrency(budget.today_spent)}` : ''}
+                          </span>
+                        ) : effectiveDailyLimit > 0 && budget.today_spent > 0 ? (
+                          <span className={cn('mt-0.5 block text-xs', isDailyOver ? 'font-semibold text-rose-600' : 'text-muted-foreground')}>
+                            Hôm nay: {formatCurrency(budget.today_spent)} / {formatCurrency(effectiveDailyLimit)}
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-4 font-medium tabular-nums text-foreground">{formatCurrency(budget.spent_amount)}</td>
+                  <td className="whitespace-nowrap px-4 py-4 tabular-nums text-muted-foreground">{formatCurrency(budget.budget_amount)}</td>
+                  <td className="min-w-48 px-4 py-4">
+                    <div className="flex items-center gap-3">
+                      <Progress value={isDailyOver && pct < 100 ? 100 : pct} className="h-2 flex-1" indicatorColor={tone.replace('text-', 'bg-')} />
+                      <span className={cn('w-10 text-right text-xs font-semibold tabular-nums', tone)}>{Math.round(pct)}%</span>
+                    </div>
+                  </td>
+                  <td className={cn('px-4 py-4 text-xs font-bold', tone)}>{statusLabel}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => onEdit(budget)}>Sửa</Button>
+                      <Button variant="ghost" size="icon-sm" aria-label={`Xóa ngân sách ${budget.category_name}`} onClick={() => onDelete(budget.id)} className="text-muted-foreground hover:text-rose-600">
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }

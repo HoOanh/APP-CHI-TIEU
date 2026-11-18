@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
 
 interface RouteContext { params: Promise<{ id: string }> }
@@ -57,8 +58,21 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     if (!updated.rows[0]) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    
-    return NextResponse.json(updated.rows[0]);
+
+    const budgetAlert = type === 'expense'
+      ? await getBudgetAlert({
+          db,
+          userId: user.id,
+          categoryId,
+          expenseDate,
+          addedAmount: amount,
+        })
+      : null;
+
+    return NextResponse.json({
+      ...updated.rows[0],
+      budgetAlert,
+    });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to update expense' }, { status: 500 });
