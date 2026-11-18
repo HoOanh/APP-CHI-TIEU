@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import {
+  cleanTransactionDescription,
+  findChatTransactionDate,
+  parseSimpleChatTransaction,
+} from '@/lib/chat-transaction-text';
 import { UNCLASSIFIED_EXPENSE } from '@/lib/schema';
 import { getBudgetAlert } from '@/lib/budget-alert';
 import { findChatTransactions, saveChatTransactions } from '@/lib/expense-chat';
@@ -8,6 +13,7 @@ import {
   correctPendingTransactions,
   parseDebtPayment,
   parseTransactionsText,
+  type ParsedTransaction,
   type PendingTransactionForCorrection,
 } from '@/lib/gemini';
 import { getCurrentUser } from '@/lib/current-user';
@@ -95,6 +101,19 @@ export async function POST(request: NextRequest) {
       };
 
       const isCorrection = !images.length && correctionContext.length > 0;
+      const today = getVietnamToday();
+      const isNewText = !images.length && !isCorrection;
+      const dateMention = isNewText ? findChatTransactionDate(message, today) : undefined;
+      if (dateMention?.date === null) {
+        return NextResponse.json({ error: 'Ngày giao dịch không hợp lệ. Kiểm tra lại ngày/tháng.' }, { status: 422 });
+      }
+      const simpleInput = isNewText ? parseSimpleChatTransaction(message, today) : null;
+      // Safe fallback for common brief meal entries when the model returns no usable transaction.
+      const mealFallback: ParsedTransaction[] = simpleInput
+        && /^(?:ăn sáng|ăn trưa|ăn tối|cà phê|mua cà phê|uống cà phê)(?=\s|$)/iu.test(simpleInput.description)
+        && !/\b(?:bao nhiêu|có nên|hay|khoảng|tầm)\b/iu.test(simpleInput.description)
+        ? [{ ...simpleInput, category: 'Ăn uống', type: 'expense', merchant: '' }]
+        : [];
       const parsedTransactions = isCorrection
         ? await correctPendingTransactions(
             message,
@@ -123,16 +142,21 @@ export async function POST(request: NextRequest) {
             categoryPolicy,
             historyContext,
             user.id,
-          );
+          ).catch((error: unknown) => {
+            if (!mealFallback.length) throw error;
+            console.warn('[chat] AI text parsing failed, using explicit meal fields');
+            return mealFallback;
+          });
 
-      if (!parsedTransactions.length) {
+      const parsed = parsedTransactions.length ? parsedTransactions : mealFallback;
+      if (!parsed.length) {
         return NextResponse.json(
           { error: 'Không thể xác định giao dịch. Vui lòng thử lại.' },
           { status: 400 },
         );
       }
 
-      if (isCorrection && parsedTransactions.length !== correctionContext.length) {
+      if (isCorrection && parsed.length !== correctionContext.length) {
         return NextResponse.json(
           { error: 'Không thể áp dụng chỉnh sửa cho các giao dịch chờ lưu.' },
           { status: 422 },
@@ -140,7 +164,13 @@ export async function POST(request: NextRequest) {
       }
 
       const invalidTransactions: string[] = [];
-      const transactions = parsedTransactions.flatMap((transaction) => {
+      const transactions = parsed.flatMap((transaction) => {
+        const explicit = parsed.length === 1 ? simpleInput : null;
+        const amount = explicit?.amount ?? transaction.amount;
+        const description = cleanTransactionDescription(
+          explicit?.description ?? transaction.description, amount, today,
+        ) || (parsed.length === 1 ? cleanTransactionDescription(message, amount, today) : '')
+          || (transaction.type === 'income' ? 'Thu nhập' : 'Chi tiêu');
         const normalizedCategory = transaction.category
           .trim()
           .toLocaleLowerCase('vi');
@@ -154,28 +184,30 @@ export async function POST(request: NextRequest) {
               normalizedCategory,
           ) ?? (transaction.type === 'expense' ? unclassifiedExpense : defaultIncome);
 
-        if (!selectedCategory || !Number.isSafeInteger(transaction.amount) || transaction.amount <= 0) {
+        if (!selectedCategory || !Number.isSafeInteger(amount) || amount <= 0) {
           invalidTransactions.push(transaction.description || transaction.category || 'Giao dịch chưa xác định');
           return [];
         }
 
+        const merchant = cleanTransactionDescription(transaction.merchant, amount, today);
+        const supplementalNote = cleanTransactionDescription(
+          (transaction.note ?? '').replace(/^nội dung:\s*/iu, ''), amount, today,
+        );
         const note = [
-          transaction.merchant ? `Đối tác: ${transaction.merchant}` : '',
-          message ? `Nội dung: ${message}` : '',
-          'Ghi bằng AI',
+          merchant && merchant.toLocaleLowerCase('vi') !== description.toLocaleLowerCase('vi')
+            ? `Đối tác: ${merchant}`
+            : '',
+          supplementalNote.toLocaleLowerCase('vi') !== description.toLocaleLowerCase('vi') ? supplementalNote : '',
         ].filter(Boolean).join(' · ');
 
         return [{
-          amount: transaction.amount,
-          description:
-            (transaction.description.trim() ||
-            message.trim() ||
-            (transaction.type === 'income' ? 'Thu nhập' : 'Chi tiêu')).slice(0, 160),
+          amount,
+          description: description.slice(0, 160),
           note: note.slice(0, 500),
           category_id: selectedCategory.id,
           category_name: selectedCategory.name,
           category_color: selectedCategory.color,
-          expense_date: transaction.date,
+          expense_date: explicit?.date ?? transaction.date,
           merchant: transaction.merchant,
           type: transaction.type,
           category_source: transaction.type === 'income' ? 'income_category'

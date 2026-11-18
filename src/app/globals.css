@@ -119,6 +119,15 @@
   }
 }
 
+/* Keep text entry readable on touch screens and avoid Safari focus zoom. */
+@media (max-width: 767px), (pointer: coarse) {
+  input:is(:not([type]), [type="text"], [type="search"], [type="number"], [type="email"], [type="tel"], [type="url"], [type="password"], [type="date"], [type="time"]),
+  textarea,
+  select {
+    font-size: max(1rem, 16px);
+  }
+}
+
 @layer utilities {
   .tabular-nums {
     font-variant-numeric: tabular-nums;

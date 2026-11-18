@@ -1,3 +1,4 @@
+import { findChatTransactionDate } from './chat-transaction-text';
 import { GoogleGenAI, type Part } from '@google/genai';
 import { getDb } from './db';
 import { decryptSecret } from './secrets';
@@ -181,6 +182,7 @@ export interface ParsedTransaction {
   description: string;
   category: string;
   merchant: string;
+  note?: string;
   date: string;
   type: 'income' | 'expense';
 }
@@ -215,6 +217,7 @@ function normalizeTransaction(
     description: String(parsed.description || fallbackDescription),
     category: String(parsed.category || 'Khác'),
     merchant: String(parsed.merchant || ''),
+    note: typeof parsed.note === 'string' ? parsed.note.trim() : '',
     date: isValidIsoDate(parsed.date) ? parsed.date : getVietnamToday(),
     type: parsed.type === 'income' ? 'income' : 'expense',
   };
@@ -226,40 +229,8 @@ function isValidIsoDate(value: unknown): value is string {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-function explicitDateInMessage(message: string): string | null {
-  const isoMatch = message.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
-  if (isoMatch) {
-    const isoDate = `${isoMatch[1]}-${String(Number(isoMatch[2])).padStart(2, '0')}-${String(Number(isoMatch[3])).padStart(2, '0')}`;
-    if (isValidIsoDate(isoDate)) return isoDate;
-  }
-  const match = message.match(/\b(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?(?![\p{L}\p{N}])/u);
-  const naturalMatch = message.match(/(?:ngày|mùng|mồng)?\s*(\d{1,2})\s+tháng\s+(\d{1,2})(?:\s+năm\s+(\d{4}))?/i);
-  if (!match && !naturalMatch) return null;
-  const dateParts = match || naturalMatch;
-  const day = Number(dateParts?.[1]);
-  const month = Number(dateParts?.[2]);
-  const currentYear = Number(getVietnamToday().slice(0, 4));
-  const yearText = dateParts?.[3];
-  const year = yearText ? Number(yearText.length === 2 ? `20${yearText}` : yearText) : currentYear;
-  const candidate = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  return isValidIsoDate(candidate) ? candidate : null;
-}
-
 function resolveMentionedDate(message: string): string | null {
-  const explicit = explicitDateInMessage(message);
-  if (explicit) return explicit;
-  const normalized = message.toLocaleLowerCase('vi');
-  if (/(?:^|[^\p{L}])hôm kia(?!\p{L})/u.test(normalized)) return shiftIsoDate(getVietnamToday(), -2);
-  if (/(?:^|[^\p{L}])(?:hôm qua|hôm trước)(?!\p{L})/u.test(normalized)) return shiftIsoDate(getVietnamToday(), -1);
-  if (/\b(ngày mai|mai)\b/.test(normalized)) return shiftIsoDate(getVietnamToday(), 1);
-  if (/\b(hôm nay|hôm ni|nay)\b/.test(normalized)) return getVietnamToday();
-  return null;
-}
-
-function shiftIsoDate(value: string, offset: number) {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + offset);
-  return date.toISOString().slice(0, 10);
+  return findChatTransactionDate(message, getVietnamToday())?.date ?? null;
 }
 
 export async function analyzeTransactions(
@@ -277,7 +248,8 @@ export async function analyzeTransactions(
 
 Trả về một JSON array. Mỗi phần tử:
 - amount: số nguyên dương, không dấu phân cách
-- description: mô tả ngắn nhưng giữ nội dung/note quan trọng
+- description: tên khoản thu/chi ngắn gọn, bỏ số tiền và ngày tháng
+- note: ghi chú riêng nếu có, bỏ trống nếu chỉ lặp thông tin đã tách
 - category: chọn CHÍNH XÁC theo quy tắc danh mục bên dưới
 - merchant: người/cửa hàng liên quan, có thể rỗng
 - date: YYYY-MM-DD
@@ -321,7 +293,8 @@ export async function parseTransactionsText(
 ): Promise<ParsedTransaction[]> {
   const today = getVietnamToday();
   const prompt = `Tách TẤT CẢ giao dịch trong nội dung sau thành JSON array.
-Mỗi phần tử gồm amount (số nguyên dương; k/nghìn/ngàn=1000, tr/triệu=1000000, bốn mươi lăm nghìn=45000), description, category, merchant, date (YYYY-MM-DD), type ("income"|"expense").
+Mỗi phần tử gồm amount (số nguyên dương; k/nghìn/ngàn=1000, tr/triệu=1000000, bốn mươi lăm nghìn=45000), description, category, merchant, note, date (YYYY-MM-DD), type ("income"|"expense").
+Mô tả chỉ ghi tên khoản thu/chi, bỏ số tiền và ngày. note chỉ ghi thông tin bổ sung rõ ràng, không chép lại câu nhập. Ví dụ "ăn tối ngày 17/11 100k" có amount 100000, description "ăn tối", note rỗng và date là ngày 17/11 trong năm hiện tại.
 Quy tắc danh mục BẮT BUỘC:
 - type = "expense": chọn danh mục chi phù hợp trong: ${categoryPolicy.expenseCategories.join(', ')}. Hũ ngân sách hiện có: ${categoryPolicy.preferredExpenseCategories.join(', ') || '(chưa có)'}. Ưu tiên hũ nếu đúng mục đích khoản chi. Dùng "${categoryPolicy.unclassifiedExpense}" nếu chưa rõ danh mục.
 - type = "income": chỉ chọn một danh mục thu nhập phù hợp: ${categoryPolicy.incomeCategories.join(', ') || '(chưa có danh mục)'}.
