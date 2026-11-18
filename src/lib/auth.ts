@@ -8,29 +8,28 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
   ],
-  pages: {
-    signIn: '/login',
-  },
+  pages: { signIn: '/login' },
   callbacks: {
-    async signIn({ user }) {
-      if (!user.email) return false;
-
-      try {
-        // Dynamic import to avoid Edge runtime crash with libsql file: URL
-        const { getDb } = await import('@/lib/db');
-        const db = await getDb();
-        await db.execute({
-          sql: `INSERT INTO users (email, name, avatar) VALUES (?, ?, ?)
-                ON CONFLICT(email) DO UPDATE SET name = ?, avatar = ?, updated_at = datetime('now')`,
-          args: [user.email, user.name || '', user.image || '', user.name || '', user.image || ''],
-        });
-      } catch (error) {
-        console.error('Failed to upsert user:', error);
-        return false;
-      }
-      return true;
+    async jwt({ token, user }) {
+      if (!user) return token;
+      if (!user.email) return null;
+      const { getDb } = await import('@/lib/db');
+      const db = await getDb();
+      const result = await db.execute({
+        sql: `INSERT INTO users (email, name, avatar) VALUES (?, ?, ?)
+              ON CONFLICT(email) DO UPDATE SET name = excluded.name, avatar = excluded.avatar,
+                updated_at = datetime('now')
+              RETURNING id`,
+        args: [user.email, user.name || '', user.image || ''],
+      });
+      token.accountId = String(result.rows[0].id);
+      return token;
     },
-    async session({ session }) {
+    async session({ session, token }) {
+      if (typeof token.accountId === 'string') {
+        session.user.id = token.accountId;
+        return session;
+      }
       if (session.user?.email) {
         try {
           const { getDb } = await import('@/lib/db');
@@ -39,11 +38,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             sql: 'SELECT id FROM users WHERE email = ?',
             args: [session.user.email],
           });
-          if (result.rows[0]) {
-            session.user.id = String(result.rows[0].id);
-          }
+          if (result.rows[0]) session.user.id = String(result.rows[0].id);
         } catch (error) {
-          console.error('Failed to hydrate session user:', error);
+          console.error('Failed to hydrate legacy session user:', error);
         }
       }
       return session;

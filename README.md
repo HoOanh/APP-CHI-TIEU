@@ -62,5 +62,7 @@ Truy cập `http://localhost:3000` để xem ứng dụng.
 - [Báo cáo kiểm thử](./docs/TEST_REPORT.md)
 - [Hướng dẫn triển khai (DEPLOY)](./docs/DEPLOY.md)
 
+- [Kế hoạch nâng cấp](./docs/UPGRADE_ROADMAP.md)
+
 ## 📄 License
 Dự án được phân phối dưới giấy phép MIT. Xem file `LICENSE` để biết thêm chi tiết.

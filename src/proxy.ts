@@ -29,12 +29,14 @@ export default async function proxy(request: NextRequest) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.redirect(new URL('/login', request.url));
+    const login = new URL('/login', request.url);
+    if (pathname === '/chat') login.searchParams.set('redirectTo', '/chat');
+    return NextResponse.redirect(login);
   }
 
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon\\.ico$|sw\\.js$|offline\\.html$|(?:manifest|ghi-nhanh)\\.webmanifest$|ghi-nhanh\\.webloc$|arc-irobot\\.png$|pwa-icon\\.svg$|icon\\.png$|api/auth).*)'],
 };

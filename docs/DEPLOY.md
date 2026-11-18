@@ -102,3 +102,8 @@ git push origin main
    - Kiểm tra `Authorized redirect URIs` trong Google Cloud Console đã khai báo chính xác domain của Vercel (kèm path `/api/auth/callback/google`) chưa.
 3. **AI Chat báo lỗi hoặc trả về sai (`429 Quota Exceeded` hoặc `500`)**:
    - Kiểm tra xem API Key Gemini có bị hết hạn hay hết lượt gọi (quota) không. Có thể vào ứng dụng, mục Cài đặt (Settings) để thêm API key thứ 2.
+
+
+### Nút Thêm vào Phím tắt Apple
+
+Nếu đã có liên kết iCloud cho một Phím tắt Apple đã chia sẻ, đặt `NEXT_PUBLIC_QUICK_ENTRY_SHORTCUT_URL` trước khi build. Phím tắt chỉ cần tác vụ **Mở URL** trỏ tới `https://<domain>/chat`. Nút xuất hiện trong hộp **Lối tắt** khi liên kết là `https://www.icloud.com/shortcuts/<id>`. Người dùng đăng nhập như khi mở trang web.

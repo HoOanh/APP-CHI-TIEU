@@ -1,14 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { MonthPicker } from '@/components/MonthPicker';
 import { CategoryIcon } from '@/components/CategoryIcon';
-import { ReceiptText, Trash2 } from 'lucide-react';
+import { ReceiptText, Search, Trash2 } from 'lucide-react';
 import { cn, formatCurrency, formatShortDate, getCurrentMonth } from '@/lib/utils';
 import { useToast } from '@/hooks/useToast';
 import { ManualTransactionDialog } from '@/components/ManualTransactionDialog';
+import { Input } from '@/components/ui/input';
+import { onTransactionsChanged } from '@/lib/transaction-events';
 
 interface Category { id: string; name: string; color: string; }
 interface Expense { id: string; amount: number; description: string; note: string | null; date: string; category: Category; type: 'income' | 'expense'; }
@@ -16,6 +18,15 @@ interface Expense { id: string; amount: number; description: string; note: strin
 export default function ExpensesPage() {
   const [month, setMonth] = useState(getCurrentMonth());
   const [activeCategoryId, setActiveCategoryId] = useState('all');
+  const [search, setSearch] = useState('');
+  const [activeSearch, setActiveSearch] = useState('');
+  const [loadError, setLoadError] = useState(false);
+  const activeRequest = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setActiveSearch(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [totalAmount, setTotalAmount] = useState(0);
@@ -31,13 +42,20 @@ export default function ExpensesPage() {
   }, []);
 
   const fetchExpenses = useCallback(async () => {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const { signal } = controller;
     setIsLoading(true);
+    setLoadError(false);
     try {
       const params = new URLSearchParams({ month });
       if (activeCategoryId !== 'all') params.set('category_id', activeCategoryId);
-      const response = await fetch(`/api/expenses?${params}`);
+      if (activeSearch) params.set('search', activeSearch);
+      const response = await fetch(`/api/expenses?${params}`, { signal });
       if (!response.ok) throw new Error('Failed to load expenses');
       const data: { items: Record<string, unknown>[]; total: number; totalIncome: number; totalExpense: number } = await response.json();
+      if (signal.aborted) return;
       setExpenses((data.items ?? []).map((item) => ({
         id: String(item.id), amount: Number(item.amount) || 0, description: String(item.description || ''),
         note: item.note ? String(item.note) : null, date: String(item.expense_date || ''),
@@ -47,13 +65,12 @@ export default function ExpensesPage() {
       setTotalAmount(Number(data.total) || 0);
       setTotalIncome(Number(data.totalIncome) || 0);
       setTotalExpense(Number(data.totalExpense) || 0);
-    } catch (error) {
-      console.error(error);
-      showToast('Không thể tải giao dịch', 'error');
+    } catch {
+      if (!signal.aborted) setLoadError(true);
     } finally {
-      setIsLoading(false);
+      if (!signal.aborted) setIsLoading(false);
     }
-  }, [activeCategoryId, month, showToast]);
+  }, [activeCategoryId, activeSearch, month]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -61,8 +78,11 @@ export default function ExpensesPage() {
   }, [fetchCategories]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchExpenses();
+    void fetchExpenses();
+    return () => activeRequest.current?.abort();
   }, [fetchExpenses]);
+
+  useEffect(() => onTransactionsChanged(() => void fetchExpenses()), [fetchExpenses]);
 
   const handleDelete = async () => {
     if (!pendingDeleteId) return;
@@ -99,7 +119,8 @@ export default function ExpensesPage() {
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
         <div className="flex items-center justify-between gap-3">
           <div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Dòng tiền</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Chi tiêu & thu nhập</h1></div>
-          <div className="flex flex-wrap items-center justify-end gap-2"><MonthPicker month={month} onChange={setMonth} /><ManualTransactionDialog compact onSaved={() => fetchExpenses()} /></div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="relative hidden lg:block"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-slate-500" /><Input aria-label="Tìm giao dịch" placeholder="Tìm nội dung, ghi chú" value={search} onChange={(event) => setSearch(event.target.value)} className="w-52 bg-white pl-9" /></div><MonthPicker month={month} onChange={setMonth} /><ManualTransactionDialog compact onSaved={() => fetchExpenses()} /></div>
         </div>
         <section className="mt-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 md:mt-5 md:grid md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-center md:gap-8 md:px-6 md:py-5">
           <div className="min-w-0">
@@ -122,12 +143,13 @@ export default function ExpensesPage() {
 
       <main className="space-y-5 px-4 py-5 md:px-8 md:py-7">
         {isLoading ? <div className="space-y-3">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-slate-200/70" />)}</div> : null}
-        {!isLoading && dates.length === 0 ? <EmptyTransactions /> : null}
-        {!isLoading && dates.length > 0 ? <>
-          <div className="space-y-5 xl:hidden">{dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} onDelete={setPendingDeleteId} onSaved={fetchExpenses} />)}</div>
+        {!isLoading && loadError ? <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-white p-4"><p className="text-sm text-rose-800">Không tải được danh sách giao dịch.</p><Button variant="outline" onClick={() => void fetchExpenses()}>Thử lại</Button></div> : null}
+        {!isLoading && !loadError && dates.length === 0 ? (activeSearch ? <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Không tìm thấy giao dịch phù hợp.</p> : <EmptyTransactions />) : null}
+        {!isLoading && !loadError && dates.length > 0 ? <>
+          <div className="space-y-5 xl:hidden">{dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} onDelete={setPendingDeleteId} onSaved={() => void fetchExpenses()} />)}</div>
           <section className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white xl:block">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4"><div><h2 className="font-semibold text-slate-800">Giao dịch trong tháng</h2><p className="mt-0.5 text-xs text-slate-400">{expenses.length} giao dịch</p></div><p className="text-sm font-semibold tabular-nums text-slate-600">Ròng {formatCurrency(totalAmount)}</p></div>
-            <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-6 py-3 font-medium">Ngày</th><th className="px-4 py-3 font-medium">Danh mục</th><th className="px-4 py-3 font-medium">Mô tả</th><th className="px-4 py-3 font-medium">Ghi chú</th><th className="px-6 py-3 text-right font-medium">Số tiền</th><th className="w-24 px-4 py-3 text-right font-medium">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-100">{dates.flatMap((date) => groups[date].items.map((expense) => <tr key={expense.id} className="group hover:bg-slate-50/70"><td className="whitespace-nowrap px-6 py-3.5 text-slate-500">{formatShortDate(date)}</td><td className="px-4 py-3.5"><span className="inline-flex items-center gap-2"><CategoryIcon name={expense.category.name} color={expense.category.color} className="size-8 rounded-lg" iconClassName="size-3.5"/><span className="text-slate-700">{expense.category.name}</span></span></td><td className="max-w-[22rem] truncate px-4 py-3.5 font-medium text-slate-800">{expense.description}</td><td className="max-w-[18rem] truncate px-4 py-3.5 text-slate-400">{expense.note || '—'}</td><td className={cn('whitespace-nowrap px-6 py-3.5 text-right font-semibold tabular-nums', expense.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>{expense.type === 'income' ? '+' : '−'}{formatCurrency(expense.amount)}</td><td className="px-4 py-2"><div className="flex justify-end gap-1"><ManualTransactionDialog compact transaction={{ ...expense, category_id: expense.category.id, date: expense.date }} onSaved={fetchExpenses} /><Button type="button" variant="ghost" size="icon-sm" onClick={() => setPendingDeleteId(expense.id)} className="text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100" aria-label={`Xóa ${expense.description}`}><Trash2 className="size-4" /></Button></div></td></tr>))}</tbody></table></div>
+            <div className="overflow-x-auto"><table className="w-full min-w-[790px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-6 py-3 font-medium">Ngày</th><th className="px-4 py-3 font-medium">Danh mục</th><th className="px-4 py-3 font-medium">Mô tả</th><th className="px-4 py-3 font-medium">Ghi chú</th><th className="px-6 py-3 text-right font-medium">Số tiền</th><th className="w-24 px-4 py-3 text-right font-medium">Thao tác</th></tr></thead><tbody className="divide-y divide-slate-100">{dates.flatMap((date) => groups[date].items.map((expense) => <tr key={expense.id} className="group hover:bg-slate-50/70"><td className="whitespace-nowrap px-6 py-3.5 text-slate-500">{formatShortDate(date)}</td><td className="px-4 py-3.5"><span className="inline-flex items-center gap-2"><CategoryIcon name={expense.category.name} color={expense.category.color} className="size-8 rounded-lg" iconClassName="size-3.5"/><span className="text-slate-700">{expense.category.name}</span></span></td><td className="max-w-[22rem] truncate px-4 py-3.5 font-medium text-slate-800">{expense.description}</td><td className="max-w-[18rem] truncate px-4 py-3.5 text-slate-400">{expense.note || '—'}</td><td className={cn('whitespace-nowrap px-6 py-3.5 text-right font-semibold tabular-nums', expense.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>{expense.type === 'income' ? '+' : '−'}{formatCurrency(expense.amount)}</td><td className="px-4 py-2"><div className="flex justify-end gap-1"><ManualTransactionDialog compact transaction={{ ...expense, category_id: expense.category.id, date: expense.date }} onSaved={() => void fetchExpenses()} /><Button type="button" variant="ghost" size="icon-sm" onClick={() => setPendingDeleteId(expense.id)} className="text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100" aria-label={`Xóa ${expense.description}`}><Trash2 className="size-4" /></Button></div></td></tr>))}</tbody></table></div>
           </section>
         </> : null}
       </main>

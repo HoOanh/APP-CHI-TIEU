@@ -13,7 +13,9 @@ function getMonthRange(month: string) {
 }
 
 export async function GET(request: NextRequest) {
+  const startedAt = performance.now();
   const user = await getCurrentUser();
+  const authenticatedAt = performance.now();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const month = request.nextUrl.searchParams.get('month') ?? getCurrentMonth();
@@ -21,6 +23,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const db = await getDb();
+    const databaseReadyAt = performance.now();
     const [summaryResult, recentResult, alertsResult, categoryResult] = await db.batch([
       {
         sql: `SELECT
@@ -63,6 +66,7 @@ export async function GET(request: NextRequest) {
       },
     ]);
 
+    const queriedAt = performance.now();
     const row = summaryResult.rows[0];
     const expense = Number(row?.expense) || 0;
     const days = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
@@ -117,7 +121,16 @@ export async function GET(request: NextRequest) {
       recent: recentResult.rows,
       attentionBudgets,
       categorySpending: categoryResult.rows,
-    }, { headers: { 'Cache-Control': 'private, no-store' } });
+    }, {
+      headers: {
+        'Cache-Control': 'private, no-store',
+        'Server-Timing': [
+          `auth;dur=${(authenticatedAt - startedAt).toFixed(1)}`,
+          `db_ready;dur=${(databaseReadyAt - authenticatedAt).toFixed(1)}`,
+          `query;dur=${(queriedAt - databaseReadyAt).toFixed(1)}`,
+        ].join(', '),
+      },
+    });
   } catch (error) {
     console.error('[dashboard]', error);
     return NextResponse.json({ error: 'Failed to fetch dashboard' }, { status: 500 });

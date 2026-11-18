@@ -173,13 +173,13 @@ export function PwaReminderSettings() {
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-slate-500">Lịch được tính theo giờ Việt Nam. Nội dung notification không hiển thị số tiền trên màn hình khóa.</p>
           </div>
         </div>
-        <Button type="button" variant={push.subscribed ? 'outline' : 'default'} className="min-h-10 shrink-0 rounded-xl" onClick={() => void togglePush()} disabled={isLoading || isTogglingPush}>
+        <Button type="button" variant={push.subscribed ? 'outline' : 'default'} className="min-h-10 shrink-0 rounded-xl" onClick={() => void togglePush()} disabled={isLoading || isTogglingPush || (!push.configured && !push.subscribed)}>
           {isTogglingPush ? <LoaderCircle className="size-4 animate-spin" /> : push.subscribed ? <BellOff className="size-4" /> : <Bell className="size-4" />}
           {isTogglingPush ? 'Đang cập nhật...' : push.subscribed ? 'Tắt thông báo thiết bị' : 'Bật thông báo thiết bị'}
         </Button>
       </div>
 
-      {!push.configured && <p className="mx-5 mt-4 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">Web Push chưa được cấu hình trên máy chủ. Cần thêm các biến VAPID theo tài liệu triển khai để bật thông báo.</p>}
+      {!isLoading && !push.configured && <p className="mx-5 mt-4 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">Thông báo thiết bị hiện chưa khả dụng.</p>}
 
       <div className="grid gap-4 p-5 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 p-4">

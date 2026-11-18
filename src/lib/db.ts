@@ -6,14 +6,14 @@ const db = createClient({
   authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-// Initialize on first import
-let initialized = false;
+let initialization: Promise<void> | undefined;
 
 export async function getDb() {
-  if (!initialized) {
-    await initializeDatabase(db);
-    initialized = true;
-  }
+  initialization ??= initializeDatabase(db).catch((error: unknown) => {
+    initialization = undefined;
+    throw error;
+  });
+  await initialization;
   return db;
 }
 

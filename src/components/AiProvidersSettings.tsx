@@ -280,7 +280,7 @@ export function AiProvidersSettings() {
   }
 
   return (
-    <section className="rounded-3xl border border-border bg-white shadow-sm">
+    <section className="rounded-2xl border border-slate-200 bg-white">
       <div className="flex items-start gap-3 border-b border-border p-5">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-primary"><Server className="size-5" /></span>
         <div>
@@ -372,16 +372,20 @@ export function AiProvidersSettings() {
         )) : <p className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">Chưa có provider. Thêm provider và chọn model để bật AI cá nhân.</p>}
 
         <form onSubmit={providerForm.handleSubmit(addProvider)} noValidate className="rounded-2xl border border-border p-4">
-          <div className="mb-4 flex items-center gap-2"><Plus className="size-4 text-primary" /><h3 className="text-sm font-semibold">Thêm provider</h3></div>
+          <h3 className="mb-3 text-sm font-semibold">Thêm nhà cung cấp</h3>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="ai-preset">Preset</Label>
+              <Label htmlFor="ai-preset">Nhà cung cấp</Label>
               <Select value={presetIndex} onValueChange={(value) => changePreset(value ?? 'custom')}>
                 <SelectTrigger id="ai-preset" className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
                 <SelectContent>{presets.map((preset, index) => <SelectItem key={`${preset.protocol}-${preset.base_url}`} value={String(index)}>{preset.label}</SelectItem>)}<SelectItem value="custom">Tùy chỉnh</SelectItem></SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5"><Label htmlFor="ai-label">Tên hiển thị</Label><Input id="ai-label" value={label} aria-invalid={Boolean(providerForm.formState.errors.label)} onChange={(event) => providerForm.setValue('label', event.target.value, { shouldValidate: true })} className="h-10 rounded-xl" />{providerForm.formState.errors.label?.message ? <p role="alert" className="text-xs text-red-600">{providerForm.formState.errors.label.message}</p> : null}</div>
+            <div className="space-y-1.5 md:col-span-2"><Label htmlFor="ai-api-key">API key</Label><Input id="ai-api-key" type="password" autoComplete="new-password" value={apiKey} aria-invalid={Boolean(providerForm.formState.errors.api_key)} onChange={(event) => providerForm.setValue('api_key', event.target.value, { shouldValidate: true })} className="h-10 rounded-xl" placeholder="Key chỉ gửi đến server và lưu dưới dạng mã hóa" />{providerForm.formState.errors.api_key?.message ? <p role="alert" className="text-xs text-red-600">{providerForm.formState.errors.api_key.message}</p> : null}</div>
+            <details open={presetIndex === 'custom' ? true : undefined} className="md:col-span-2">
+              <summary className="cursor-pointer text-sm text-slate-600">Cấu hình nâng cao</summary>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="ai-protocol">Giao thức</Label>
               <Select value={protocol} onValueChange={(value) => { if (value === 'gemini' || value === 'openai_compatible') providerForm.setValue('protocol', value, { shouldValidate: true }); }}>
@@ -390,7 +394,8 @@ export function AiProvidersSettings() {
               </Select>
             </div>
             <div className="space-y-1.5"><Label htmlFor="ai-base-url">Base URL</Label><Input id="ai-base-url" type="url" value={baseUrl} aria-invalid={Boolean(providerForm.formState.errors.base_url)} onChange={(event) => providerForm.setValue('base_url', event.target.value, { shouldValidate: true })} className="h-10 rounded-xl" />{providerForm.formState.errors.base_url?.message ? <p role="alert" className="text-xs text-red-600">{providerForm.formState.errors.base_url.message}</p> : null}</div>
-            <div className="space-y-1.5 md:col-span-2"><Label htmlFor="ai-api-key">API key</Label><Input id="ai-api-key" type="password" autoComplete="new-password" value={apiKey} aria-invalid={Boolean(providerForm.formState.errors.api_key)} onChange={(event) => providerForm.setValue('api_key', event.target.value, { shouldValidate: true })} className="h-10 rounded-xl" placeholder="Key chỉ gửi đến server và lưu dưới dạng mã hóa" />{providerForm.formState.errors.api_key?.message ? <p role="alert" className="text-xs text-red-600">{providerForm.formState.errors.api_key.message}</p> : null}</div>
+              </div>
+            </details>
           </div>
           <div className="mt-4 flex justify-end"><Button type="submit" disabled={busy === 'create'}>{busy === 'create' ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />} Thêm provider</Button></div>
         </form>

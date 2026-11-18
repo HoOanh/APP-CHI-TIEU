@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { onTransactionsChanged } from '@/lib/transaction-events';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -130,7 +131,9 @@ export default function BudgetsPage() {
   const [month, setMonth] = useState(getCurrentMonth());
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const activeRequest = useRef<AbortController | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
@@ -178,17 +181,21 @@ export default function BudgetsPage() {
   };
 
   const fetchBudgets = useCallback(async () => {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const { signal } = controller;
+    setIsLoading(true);
+    setLoadError(false);
     try {
-      setIsLoading(true);
-      const res = await fetch(`/api/budgets?month=${month}`);
-      if (res.ok) {
-        const data = await res.json();
-        setBudgets(data);
-      }
-    } catch (error) {
-      console.error('Error fetching budgets:', error);
+      const res = await fetch(`/api/budgets?month=${month}`, { signal });
+      if (!res.ok) throw new Error('Failed to load budgets');
+      const data: Budget[] = await res.json();
+      if (!signal.aborted) setBudgets(data);
+    } catch {
+      if (!signal.aborted) setLoadError(true);
     } finally {
-      setIsLoading(false);
+      if (!signal.aborted) setIsLoading(false);
     }
   }, [month]);
 
@@ -205,11 +212,15 @@ export default function BudgetsPage() {
   }, []);
 
   useEffect(() => {
-    // Data fetching is intentionally triggered by the selected month.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchBudgets();
-    fetchCategories();
-  }, [fetchBudgets, fetchCategories]);
+    void fetchBudgets();
+    return () => activeRequest.current?.abort();
+  }, [fetchBudgets]);
+
+  useEffect(() => onTransactionsChanged(() => void fetchBudgets()), [fetchBudgets]);
+
+  useEffect(() => {
+    void fetchCategories();
+  }, [fetchCategories]);
 
   const { totalBudget, totalSpent, overallPercentage, remaining } =
     useMemo(() => {
@@ -376,14 +387,14 @@ export default function BudgetsPage() {
 
   return (
     <div className="pb-nav mx-auto flex min-h-screen w-full max-w-7xl flex-col bg-background text-foreground">
-      <div className="p-4 flex items-center justify-between border-b border-border sticky top-0 bg-background/80 backdrop-blur-md z-10">
-        <h1 className="text-xl font-bold">Ngân sách</h1>
+      <div className="p-4 flex items-center justify-between border-b border-border sticky top-0 bg-background/80 backdrop-blur-md z-10 md:static md:border-0 md:px-8 md:pb-0 md:pt-7">
+        <h1 className="text-xl font-bold md:text-2xl">Ngân sách</h1>
         <MonthPicker month={month} onChange={setMonth} />
       </div>
 
       <div className="flex-1 space-y-6 p-4 md:p-8">
         {/* Overall summary */}
-        <Card className="rounded-2xl border-border bg-card shadow-sm">
+        {!isLoading && !loadError && budgets.length > 0 && <Card className="rounded-2xl border-slate-200 bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Wallet className="w-4 h-4" /> Tổng ngân sách tháng
@@ -431,7 +442,7 @@ export default function BudgetsPage() {
               <span>{Math.round(overallPercentage)}%</span>
             </div>
           </CardContent>
-        </Card>
+        </Card>}
 
         {/* Budget jars header */}
         <div className="flex flex-wrap justify-between items-center gap-2">
@@ -440,7 +451,7 @@ export default function BudgetsPage() {
             <Button
               size="sm"
               onClick={openCreateDialog}
-              className="h-8 rounded-xl text-xs font-semibold"
+              className={cn("h-8 rounded-xl text-xs font-semibold", !isLoading && !loadError && budgets.length === 0 && "md:hidden")}
             >
               <Plus className="mr-1 size-3.5" />
               Thêm hũ
@@ -452,7 +463,7 @@ export default function BudgetsPage() {
               className="rounded-xl h-8 text-xs font-medium border-border"
             >
               <FileJson2 className="w-3 h-3 mr-1.5" />
-              Import JSON
+              Nhập JSON
             </Button>
             <Button
               variant="outline"
@@ -461,7 +472,7 @@ export default function BudgetsPage() {
               className="rounded-xl h-8 text-xs font-medium border-border"
             >
               <Copy className="w-3 h-3 mr-1.5" />
-              Tháng trước
+              Sao chép tháng trước
             </Button>
           </div>
         </div>
@@ -471,10 +482,15 @@ export default function BudgetsPage() {
           <div className="flex justify-center p-8 text-muted-foreground">
             Đang tải...
           </div>
+        ) : loadError ? (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-white p-5">
+            <p className="text-sm text-rose-800">Không tải được ngân sách tháng này.</p>
+            <Button type="button" variant="outline" onClick={() => void fetchBudgets()}>Thử lại</Button>
+          </div>
         ) : budgets.length === 0 ? (
-          <div className="text-center p-8 border border-dashed border-border rounded-2xl bg-card/50">
-            <p className="text-muted-foreground mb-4">
-              Chưa có ngân sách nào trong tháng này
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center md:flex md:items-center md:justify-between md:gap-4 md:text-left">
+            <p className="mb-4 text-sm text-slate-600 md:mb-0">
+              Chưa có hũ chi tiêu cho tháng đã chọn
             </p>
             <Button onClick={openCreateDialog} className="rounded-xl">
               Tạo ngân sách đầu tiên

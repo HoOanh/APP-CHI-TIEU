@@ -192,6 +192,8 @@ export interface TransactionImage {
 
 export interface TransactionCategoryPolicy {
   expenseCategories: string[];
+  preferredExpenseCategories: string[];
+  unclassifiedExpense: string;
   incomeCategories: string[];
 }
 
@@ -230,7 +232,7 @@ function explicitDateInMessage(message: string): string | null {
     const isoDate = `${isoMatch[1]}-${String(Number(isoMatch[2])).padStart(2, '0')}-${String(Number(isoMatch[3])).padStart(2, '0')}`;
     if (isValidIsoDate(isoDate)) return isoDate;
   }
-  const match = message.match(/\b(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?\b/);
+  const match = message.match(/\b(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?(?![\p{L}\p{N}])/u);
   const naturalMatch = message.match(/(?:ngày|mùng|mồng)?\s*(\d{1,2})\s+tháng\s+(\d{1,2})(?:\s+năm\s+(\d{4}))?/i);
   if (!match && !naturalMatch) return null;
   const dateParts = match || naturalMatch;
@@ -247,8 +249,8 @@ function resolveMentionedDate(message: string): string | null {
   const explicit = explicitDateInMessage(message);
   if (explicit) return explicit;
   const normalized = message.toLocaleLowerCase('vi');
-  if (/\b(hôm kia|ngày kia)\b/.test(normalized)) return shiftIsoDate(getVietnamToday(), -2);
-  if (/\b(hôm qua|hôm trước)\b/.test(normalized)) return shiftIsoDate(getVietnamToday(), -1);
+  if (/(?:^|[^\p{L}])hôm kia(?!\p{L})/u.test(normalized)) return shiftIsoDate(getVietnamToday(), -2);
+  if (/(?:^|[^\p{L}])(?:hôm qua|hôm trước)(?!\p{L})/u.test(normalized)) return shiftIsoDate(getVietnamToday(), -1);
   if (/\b(ngày mai|mai)\b/.test(normalized)) return shiftIsoDate(getVietnamToday(), 1);
   if (/\b(hôm nay|hôm ni|nay)\b/.test(normalized)) return getVietnamToday();
   return null;
@@ -282,12 +284,13 @@ Trả về một JSON array. Mỗi phần tử:
 - type: "income" hoặc "expense"
 
 Quy tắc bắt buộc khi phân loại:
-1. Nếu type = "expense", category PHẢI là một hũ chi tiêu đang có: ${expenseCategoryList}.
+1. Nếu type = "expense", category phải thuộc: ${expenseCategoryList}. Hũ ngân sách hiện có: ${categoryPolicy.preferredExpenseCategories.join(', ') || '(chưa có)'}. Chỉ ưu tiên hũ khi đúng mục đích khoản chi. Dùng "${categoryPolicy.unclassifiedExpense}" nếu không đủ căn cứ phân loại.
 2. Nếu type = "income", category PHẢI là một danh mục thu nhập phù hợp trong: ${incomeCategoryList}.
 3. Dùng merchant, description và note/nội dung người dùng để đối chiếu lịch sử trước; ví dụ giao dịch/ghi chú tương tự phải theo danh mục lịch sử nếu danh mục đó được phép ở (1) hoặc (2).
 4. Tuyệt đối không bịa danh mục mới, không chọn theo cảm tính và không dùng danh mục thu nhập cho khoản chi.
 Không tự suy diễn "chuyển khoản" là Mua sắm nếu note cho biết mục đích khác.
 Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Nếu nội dung nói "hôm nay" hoặc không nêu ngày thì dùng chính xác ${today}. Ngày viết theo tiếng Việt d/M, dd/MM hoặc "ngày d tháng M" là ngày/tháng; nếu thiếu năm thì dùng năm hiện tại ${today.slice(0, 4)}.
+Chỉ ghi giao dịch thực có số tiền thể hiện rõ; không suy đoán số tiền còn thiếu. Trả [] nếu không nhận diện được giao dịch.
 Không gộp nhiều giao dịch thành một. Loại bỏ các dòng chỉ là số dư, tổng cộng, phí đã nằm trong tổng hoặc giao dịch trùng giữa các ảnh.
 
 Lịch sử tham chiếu:
@@ -318,18 +321,21 @@ export async function parseTransactionsText(
 ): Promise<ParsedTransaction[]> {
   const today = getVietnamToday();
   const prompt = `Tách TẤT CẢ giao dịch trong nội dung sau thành JSON array.
-Mỗi phần tử gồm amount (số nguyên dương; k=1000, tr=1000000), description, category, merchant, date (YYYY-MM-DD), type ("income"|"expense").
+Mỗi phần tử gồm amount (số nguyên dương; k/nghìn/ngàn=1000, tr/triệu=1000000, bốn mươi lăm nghìn=45000), description, category, merchant, date (YYYY-MM-DD), type ("income"|"expense").
 Quy tắc danh mục BẮT BUỘC:
-- type = "expense": chỉ chọn một hũ chi tiêu: ${categoryPolicy.expenseCategories.join(', ') || '(chưa có hũ chi tiêu)'}.
+- type = "expense": chọn danh mục chi phù hợp trong: ${categoryPolicy.expenseCategories.join(', ')}. Hũ ngân sách hiện có: ${categoryPolicy.preferredExpenseCategories.join(', ') || '(chưa có)'}. Ưu tiên hũ nếu đúng mục đích khoản chi. Dùng "${categoryPolicy.unclassifiedExpense}" nếu chưa rõ danh mục.
 - type = "income": chỉ chọn một danh mục thu nhập phù hợp: ${categoryPolicy.incomeCategories.join(', ') || '(chưa có danh mục)'}.
 Phân loại dựa trên mô tả/note trước, sau đó đối chiếu lịch sử tương tự. Không tự tạo danh mục hoặc chọn danh mục ngoài danh sách:
 ${historyContext || 'Chưa có lịch sử.'}
 Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Nếu nội dung nói "hôm nay" hoặc không nêu ngày thì dùng chính xác ${today}. Ngày d/M, dd/MM hoặc "ngày d tháng M" được hiểu là ngày/tháng; nếu thiếu năm thì dùng năm ${today.slice(0, 4)}.
-Không gộp nhiều giao dịch. Nội dung: "${message}"
+Chỉ bóc tách khoản thu/chi thực có số tiền được nêu rõ. Không tự suy đoán số tiền, không coi ngày tháng hoặc số lượng là số tiền.
+Nếu nội dung chỉ là câu hỏi, dự định, yêu cầu chỉnh sửa/xóa giao dịch cũ hoặc không có khoản đủ dữ liệu, trả [].
+Một câu có nhiều giao dịch thì dùng ngày riêng của từng khoản và không gộp các khoản. Nội dung: "${message}"
 Chỉ trả JSON array hợp lệ.`;
   const text = await callGeminiWithFallback([prompt], userId);
-  const explicitDate = resolveMentionedDate(message) || today;
-  return parseJsonArrayResponse(text)
+  const transactions = parseJsonArrayResponse(text);
+  const explicitDate = transactions.length === 1 ? resolveMentionedDate(message) : null;
+  return transactions
     .map((item) => normalizeTransaction(item, message))
     .map((item) => explicitDate ? { ...item, date: explicitDate } : item)
     .filter((item) => item.amount > 0);
@@ -354,7 +360,7 @@ Quy tắc bắt buộc:
 - Áp dụng yêu cầu như "giao dịch đầu", "giao dịch thứ 2", "món cuối" vào đúng vị trí tương ứng.
 - Giữ nguyên amount, date, description, merchant và type, trừ khi yêu cầu nói rõ cần đổi trường đó.
 - Nếu người dùng chỉ nói mục đích như "là tiền ăn", hãy đổi category của giao dịch được nhắc tới sang hũ phù hợp, không thay đổi số tiền.
-- type = "expense" chỉ được chọn hũ: ${categoryPolicy.expenseCategories.join(', ') || '(chưa có hũ chi tiêu)'}.
+- type = "expense" chọn danh mục chi trong: ${categoryPolicy.expenseCategories.join(', ')}.
 - type = "income" chỉ được chọn danh mục: ${categoryPolicy.incomeCategories.join(', ') || '(chưa có danh mục)'}.
 - Không tự tạo danh mục. Nếu yêu cầu không thể áp dụng, giữ nguyên giao dịch đó.
 Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Chỉ đổi ngày nếu nội dung yêu cầu rõ; "hôm nay" là ${today}. Ngày d/M hoặc dd/MM được hiểu là ngày/tháng.

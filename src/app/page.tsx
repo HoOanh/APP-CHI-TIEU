@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import useSWR from 'swr';
+import { QuickEntryAccess } from '@/components/QuickEntryAccess';
 import {
   ChevronRight,
   ReceiptText,
@@ -72,9 +73,9 @@ const fetchDashboard = async (url: string): Promise<DashboardResponse> => {
 
 export default function DashboardPage() {
   const month = getCurrentMonth();
-  const { data, error } = useSWR(`/api/dashboard?month=${month}`, fetchDashboard, {
+  const { data, error, mutate } = useSWR(`/api/dashboard?month=${month}`, fetchDashboard, {
     dedupingInterval: 10_000,
-    revalidateOnFocus: false,
+    revalidateOnFocus: true,
   });
   const summary = data?.summary ?? null;
   const recent = data?.recent ?? null;
@@ -87,20 +88,28 @@ export default function DashboardPage() {
       <header className="mb-6 flex items-center justify-between md:mb-8">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#00a970]">Tài chính</p>
-          <h1 className="mt-1 text-xl font-semibold tracking-[-0.035em] text-slate-800">Xin chào 👋</h1>
+          <h1 className="mt-1 text-xl font-semibold tracking-[-0.035em] text-slate-800 md:text-2xl">Tổng quan</h1>
           <p className="mt-0.5 text-sm text-slate-400">{getMonthLabel(month)}</p>
         </div>
+        <div className="flex shrink-0 items-center gap-2">
+        <QuickEntryAccess />
         <Link
           href="/settings"
           aria-label="Cài đặt"
-          className="flex size-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 md:hidden"
         >
           <Settings className="size-5" />
           <span className="sr-only">Cài đặt</span>
         </Link>
+        </div>
       </header>
 
-      {error ? <p className="mb-5 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">Không thể tải dữ liệu. Hãy thử lại.</p> : null}
+      {error && <div role="alert" className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <p>Không tải được Tổng quan.</p>
+        <button type="button" className="shrink-0 font-semibold underline" onClick={() => void mutate()}>Thử lại</button>
+      </div>}
+
+      {(!error || data) && <>
 
       <section className="overflow-hidden rounded-[24px] bg-[#00bc7c] text-white shadow-[0_18px_38px_-24px_rgba(0,188,124,0.75)]">
         <div className="relative p-5 sm:p-6">
@@ -158,7 +167,7 @@ export default function DashboardPage() {
       <aside className="space-y-6 xl:col-span-5">
       <WeeklyInsightCard />
       <section>
-        <SectionTitle title="Chi theo danh mục" href="/settings#thong-ke" />
+        <SectionTitle title="Chi theo danh mục" href="/stats" mobileHref="/settings#thong-ke" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           {categorySpending === null ? <div className="space-y-4">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-9 w-full" />)}</div> : categorySpending.length ? (
             <div className="space-y-4">
@@ -182,7 +191,7 @@ export default function DashboardPage() {
       </section>
 
       <section>
-        <SectionTitle title="Theo dõi ngân sách" href="/planning" />
+        <SectionTitle title="Theo dõi ngân sách" href="/budgets" mobileHref="/planning" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           {attentionBudgets === null ? <div className="space-y-3">{[1, 2].map((item) => <Skeleton key={item} className="h-8 w-full" />)}</div> : attentionBudgets.length ? attentionBudgets.map((budget) => {
             const progress = getPercentage(budget.spent_amount, budget.budget_amount);
@@ -203,6 +212,7 @@ export default function DashboardPage() {
       </section>
       </aside>
       </div>
+      </>}
     </div>
   );
 }
@@ -216,11 +226,12 @@ function MoneyMetric({ label, value, prefix, tone, className }: { label: string;
   );
 }
 
-function SectionTitle({ title, href }: { title: string; href: string }) {
+function SectionTitle({ title, href, mobileHref }: { title: string; href: string; mobileHref?: string }) {
   return (
     <div className="mb-3 flex items-center justify-between">
       <h2 className="text-[15px] font-semibold text-slate-800">{title}</h2>
-      <Link href={href} className="flex items-center text-xs font-medium text-slate-400">Xem tất cả <ChevronRight className="size-3.5" /></Link>
+      <Link href={href} className={cn('items-center text-xs font-medium text-slate-500', mobileHref ? 'hidden md:flex' : 'flex')}>Xem tất cả <ChevronRight className="size-3.5" /></Link>
+      {mobileHref && <Link href={mobileHref} className="flex items-center text-xs font-medium text-slate-500 md:hidden">Xem tất cả <ChevronRight className="size-3.5" /></Link>}
     </div>
   );
 }

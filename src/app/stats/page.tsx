@@ -1,6 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
+import { onTransactionsChanged } from '@/lib/transaction-events';
 import dynamic from 'next/dynamic';
 import { ChevronLeft, ChevronRight, ReceiptText, TrendingDown, TrendingUp, WalletCards } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,27 +24,16 @@ export default function StatsPage() {
   const [period, setPeriod] = useState<Period>('daily');
   const [month, setMonth] = useState(getCurrentMonth());
   const [year, setYear] = useState(new Date().getFullYear().toString());
-  const [data, setData] = useState<StatsResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { data, error, isLoading, mutate } = useSWR<StatsResponse>(
+    `/api/expenses/stats?period=${period}&month=${month}&year=${year}`,
+    async (url: string) => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Không tải được thống kê');
+      return response.json();
+    },
+  );
 
-  const fetchStats = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch(`/api/expenses/stats?period=${period}&month=${month}&year=${year}`);
-      if (!response.ok) throw new Error('Failed to load stats');
-      setData(await response.json());
-    } catch (error) {
-      console.error(error);
-      setData(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [month, period, year]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchStats();
-  }, [fetchStats]);
+  useEffect(() => onTransactionsChanged(() => void mutate()), [mutate]);
 
   const topCategory = data?.by_category[0];
   const peak = useMemo(() => data?.by_date.reduce<DatePoint | null>((current, point) => !current || point.total > current.total ? point : current, null) ?? null, [data?.by_date]);
@@ -52,11 +43,11 @@ export default function StatsPage() {
     <div className="mx-auto min-h-screen w-full max-w-7xl bg-[#f7f9fb] pb-nav">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
         <div className="flex items-center justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h1></div><PeriodPicker period={period} month={month} year={year} onMonth={setMonth} onYear={setYear} /></div>
-        <Tabs value={period} onValueChange={(value) => setPeriod(value as Period)} className="mt-4"><TabsList className="grid w-full grid-cols-4 rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
+        <Tabs value={period} onValueChange={(value) => setPeriod(value as Period)} className="mt-4"><TabsList className="grid w-full grid-cols-4 md:max-w-sm rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
       </header>
 
       <main className="space-y-5 px-4 py-5 md:px-8 md:py-7 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0">
-        {isLoading ? <div className="lg:col-span-2"><StatsSkeleton /></div> : data ? <>
+        {error ? <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-white p-4 lg:col-span-2"><p className="text-sm text-rose-800">Không tải được thống kê kỳ này.</p><Button variant="outline" onClick={() => void mutate()}>Thử lại</Button></div> : isLoading ? <div className="lg:col-span-2"><StatsSkeleton /></div> : data ? <>
           <section className="overflow-hidden rounded-[22px] bg-[#344554] p-5 text-white shadow-[0_18px_36px_-25px_rgba(39,55,73,0.8)]">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">Tổng chi tiêu</p>
             <p className="mt-2 text-[31px] font-semibold leading-none tracking-[-0.055em] tabular-nums">{formatCurrency(data.total)}</p>

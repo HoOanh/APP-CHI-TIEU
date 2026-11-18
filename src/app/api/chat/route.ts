@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { UNCLASSIFIED_EXPENSE } from '@/lib/schema';
+import { getBudgetAlert } from '@/lib/budget-alert';
+import { findChatTransactions, saveChatTransactions } from '@/lib/expense-chat';
 import {
   analyzeTransactions,
   correctPendingTransactions,
@@ -22,44 +25,62 @@ export async function POST(request: NextRequest) {
       .getAll('images')
       .concat(formData.getAll('image'))
       .filter((item): item is File => item instanceof File && item.size > 0);
-    const message = (formData.get('message') as string) || '';
-    const type = (formData.get('type') as string) || 'expense';
-    const correctionContext = parseCorrectionContext(formData.get('correction_context'));
+    const messageInput = formData.get('message');
+    const message = typeof messageInput === 'string' ? messageInput.trim() : '';
+    const type = formData.get('type') || 'expense';
+    const requestId = formData.get('client_request_id');
 
     const db = await getDb();
 
     if (type === 'expense') {
-      const categoriesResult = await db.execute({
-        sql: 'SELECT id, name, color FROM categories WHERE user_id IS NULL OR user_id = ?',
-        args: [user.id],
-      });
-      const budgetCategoriesResult = await db.execute({
-        sql: `SELECT DISTINCT c.id, c.name, c.color
-              FROM budget_jars b
-              JOIN categories c ON c.id = b.category_id
-              WHERE b.user_id = ?
-              ORDER BY c.name COLLATE NOCASE ASC`,
-        args: [user.id],
-      });
+      if (requestId !== null && (typeof requestId !== 'string' || !/^[a-z0-9_-]{8,80}$/i.test(requestId))) {
+        return NextResponse.json({ error: 'Mã yêu cầu không hợp lệ.' }, { status: 400 });
+      }
+      if (requestId) {
+        const saved = await findChatTransactions(db, user.id, requestId);
+        if (saved) return NextResponse.json({ saved: true, transactions: saved });
+        if (!message.trim() && !images.length) {
+          return NextResponse.json({ error: 'Hãy nhập giao dịch hoặc gửi ảnh biên lai.' }, { status: 400 });
+        }
+        if (!images.length && /^(?:sửa|đổi|chỉnh(?: sửa)?|cập nhật|xo[áảa])\s+(?:lại\s+)?(?:giao dịch|khoản (?:chi|thu|vừa)|số tiền|danh mục|ngày giao dịch)(?=\s|$)/iu.test(message.trim())) {
+          return NextResponse.json({ error: 'Dùng nút Sửa trên giao dịch đã lưu để cập nhật.' }, { status: 422 });
+        }
+      }
+
+      // Older clients still submit parsed transactions separately.
+      const correctionContext = requestId ? [] : parseCorrectionContext(formData.get('correction_context'));
+      const [categoriesResult, budgetCategoriesResult, historyResult] = await db.batch([
+        {
+          sql: 'SELECT id, name, color FROM categories WHERE user_id IS NULL OR user_id = ?',
+          args: [user.id],
+        },
+        {
+          sql: `SELECT DISTINCT c.id, c.name, c.color
+                FROM budget_jars b
+                JOIN categories c ON c.id = b.category_id
+                WHERE b.user_id = ? AND (c.user_id IS NULL OR c.user_id = b.user_id)
+                ORDER BY c.name COLLATE NOCASE ASC`,
+          args: [user.id],
+        },
+        {
+          sql: `SELECT e.description, e.note, e.type, c.name AS category_name
+                FROM expenses e
+                LEFT JOIN categories c ON c.id = e.category_id
+                WHERE e.user_id = ?
+                ORDER BY e.expense_date DESC, e.created_at DESC
+                LIMIT 120`,
+          args: [user.id],
+        },
+      ], 'read');
       const categories = categoriesResult.rows.map((row) => ({
         id: String(row.id),
         name: String(row.name),
         color: String(row.color),
       }));
-      const budgetCategories = budgetCategoriesResult.rows.map((row) => ({
-        id: String(row.id),
-        name: String(row.name),
-        color: String(row.color),
-      }));
-      const historyResult = await db.execute({
-        sql: `SELECT e.description, e.note, e.type, c.name AS category_name
-              FROM expenses e
-              LEFT JOIN categories c ON c.id = e.category_id
-              WHERE e.user_id = ?
-              ORDER BY e.expense_date DESC, e.created_at DESC
-              LIMIT 120`,
-        args: [user.id],
-      });
+      const budgetCategories = budgetCategoriesResult.rows.map((row) => String(row.name));
+      const expenseCategories = categories.filter((category) => category.name !== 'Thu nhập');
+      const unclassifiedExpense = expenseCategories.find((category) => category.name === UNCLASSIFIED_EXPENSE);
+      const defaultIncome = categories.find((category) => category.name === 'Thu nhập');
       const historyContext = historyResult.rows
         .map(
           (row) =>
@@ -67,7 +88,9 @@ export async function POST(request: NextRequest) {
         )
         .join('\n');
       const categoryPolicy = {
-        expenseCategories: budgetCategories.map((category) => category.name),
+        expenseCategories: expenseCategories.map((category) => category.name),
+        preferredExpenseCategories: budgetCategories,
+        unclassifiedExpense: UNCLASSIFIED_EXPENSE,
         incomeCategories: categories.map((category) => category.name),
       };
 
@@ -122,16 +145,16 @@ export async function POST(request: NextRequest) {
           .trim()
           .toLocaleLowerCase('vi');
         const allowedCategories = transaction.type === 'expense'
-          ? budgetCategories
+          ? expenseCategories
           : categories;
         const selectedCategory =
           allowedCategories.find(
             (row) =>
               row.name.trim().toLocaleLowerCase('vi') ===
               normalizedCategory,
-          );
+          ) ?? (transaction.type === 'expense' ? unclassifiedExpense : defaultIncome);
 
-        if (!selectedCategory) {
+        if (!selectedCategory || !Number.isSafeInteger(transaction.amount) || transaction.amount <= 0) {
           invalidTransactions.push(transaction.description || transaction.category || 'Giao dịch chưa xác định');
           return [];
         }
@@ -145,31 +168,50 @@ export async function POST(request: NextRequest) {
         return [{
           amount: transaction.amount,
           description:
-            transaction.description ||
-            message ||
-            (transaction.type === 'income' ? 'Thu nhập' : 'Chi tiêu'),
-          note,
+            (transaction.description.trim() ||
+            message.trim() ||
+            (transaction.type === 'income' ? 'Thu nhập' : 'Chi tiêu')).slice(0, 160),
+          note: note.slice(0, 500),
           category_id: selectedCategory.id,
           category_name: selectedCategory.name,
           category_color: selectedCategory.color,
           expense_date: transaction.date,
           merchant: transaction.merchant,
           type: transaction.type,
-          category_source: transaction.type === 'expense' ? 'budget_jar' : 'income_category',
+          category_source: transaction.type === 'income' ? 'income_category'
+            : budgetCategories.includes(selectedCategory.name) ? 'budget_jar' : 'expense_category',
         }];
       });
 
       if (invalidTransactions.length || !transactions.length) {
-        const missingBudgetHint = !budgetCategories.length
-          ? ' Bạn chưa có hũ chi tiêu để ghi khoản chi.'
-          : '';
         return NextResponse.json(
-          { error: `Không thể khớp danh mục hợp lệ cho: ${invalidTransactions.join(', ')}.${missingBudgetHint}` },
+          { error: `Không thể xác định số tiền hoặc danh mục hợp lệ cho: ${invalidTransactions.join(', ')}.` },
           { status: 422 },
         );
       }
 
-      return NextResponse.json({ transactions, correction: isCorrection });
+      if (!requestId) return NextResponse.json({ transactions, correction: isCorrection });
+
+      const saved = await saveChatTransactions(db, user.id, requestId, transactions);
+      const expenseGroups = new Map<string, { categoryId: string; expenseDate: string; addedAmount: number }>();
+      if (saved.inserted) {
+        for (const transaction of transactions) {
+          if (transaction.type !== 'expense') continue;
+          const key = `${transaction.category_id}:${transaction.expense_date.slice(0, 7)}`;
+          const group = expenseGroups.get(key);
+          if (group) group.addedAmount += transaction.amount;
+          else expenseGroups.set(key, {
+            categoryId: transaction.category_id,
+            expenseDate: transaction.expense_date,
+            addedAmount: transaction.amount,
+          });
+        }
+      }
+      const alerts = await Promise.allSettled([...expenseGroups.values()].map((group) =>
+        getBudgetAlert({ db, userId: user.id, ...group }),
+      ));
+      const budgetAlerts = alerts.flatMap((alert) => alert.status === 'fulfilled' && alert.value ? [alert.value] : []);
+      return NextResponse.json({ saved: true, transactions: saved.transactions, budgetAlerts }, { status: saved.inserted ? 201 : 200 });
       
     } else if (type === 'debt') {
       const debtsResult = await db.execute({
@@ -226,7 +268,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: 'Failed to process chat' }, { status: 500 });
+    return NextResponse.json({ error: 'Không thể xử lý giao dịch. Vui lòng thử lại.' }, { status: 500 });
   }
 }
 

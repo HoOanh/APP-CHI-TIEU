@@ -21,7 +21,6 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MonthPicker } from '@/components/MonthPicker';
@@ -30,6 +29,7 @@ import { formatCurrency, getCurrentMonth, getPercentage } from '@/lib/utils';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { AiProvidersSettings } from '@/components/AiProvidersSettings';
 import { PwaReminderSettings } from '@/components/PwaReminderSettings';
+import Link from 'next/link';
 import { clearPwaCache } from '@/lib/pwa-cache';
 
 const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
@@ -86,12 +86,11 @@ export default function SettingsPage() {
   useEffect(() => {
     async function loadSettings() {
       try {
-        const [categoryResponse, statsResponse, profileResponse, summaryResponse] =
+        const [categoryResponse, statsResponse, profileResponse] =
           await Promise.all([
             fetch('/api/categories'),
             fetch('/api/settings/stats'),
             fetch('/api/profile'),
-            fetch(`/api/expenses/stats?period=${period}&month=${month}&year=${year}`),
           ]);
 
         if (categoryResponse.ok) {
@@ -101,7 +100,6 @@ export default function SettingsPage() {
           setStats(await statsResponse.json());
         }
         if (profileResponse?.ok) setProfile(await profileResponse.json() as ProfileResponse);
-        if (summaryResponse?.ok) setSpendingSummary(await summaryResponse.json() as SpendingSummary);
       } catch {
         showToast('Không thể tải cài đặt', 'error');
       } finally {
@@ -110,7 +108,28 @@ export default function SettingsPage() {
     }
 
     void loadSettings();
-  }, [showToast, period, month, year]);
+  }, [showToast]);
+
+  useEffect(() => {
+    const mobile = window.matchMedia('(max-width: 767px)');
+    const controller = new AbortController();
+    const load = () => {
+      if (!mobile.matches) return;
+      void fetch(`/api/expenses/stats?period=${period}&month=${month}&year=${year}`, { signal: controller.signal })
+        .then(async (response) => {
+          if (!response.ok) throw new Error('Không thể tải thống kê');
+          const result: SpendingSummary = await response.json();
+          if (!controller.signal.aborted) setSpendingSummary(result);
+        })
+        .catch(() => { if (!controller.signal.aborted) showToast('Không thể tải thống kê', 'error'); });
+    };
+    load();
+    mobile.addEventListener('change', load);
+    return () => {
+      controller.abort();
+      mobile.removeEventListener('change', load);
+    };
+  }, [month, period, showToast, year]);
 
   async function addCategory() {
     if (!newCategory.name.trim()) return;
@@ -194,7 +213,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-5xl space-y-6 bg-background p-4 pb-nav md:p-8">
+    <div className="mx-auto min-h-screen max-w-7xl space-y-6 bg-background p-4 pb-nav md:px-8 md:py-7">
       <header className="flex items-center gap-3 pt-2">
         <Button
           variant="ghost"
@@ -212,7 +231,15 @@ export default function SettingsPage() {
         </div>
       </header>
 
-      <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-sm">
+      <div className="md:grid md:grid-cols-[minmax(0,1fr)] xl:grid-cols-[190px_minmax(0,1fr)] xl:gap-7">
+        <nav aria-label="Mục cài đặt" className="sticky top-6 hidden h-fit rounded-2xl border border-slate-200 bg-white p-2 xl:block">
+          {[
+            ['#ho-so', 'Hồ sơ'], ['#ai-ca-nhan', 'AI cá nhân'],
+            ['#nhac-nho', 'Nhắc nhở'], ['#danh-muc', 'Danh mục'], ['#du-lieu', 'Dữ liệu'],
+          ].map(([href, label]) => <a key={href} href={href} className="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{label}</a>)}
+        </nav>
+        <div className="min-w-0 space-y-6">
+      <section id="ho-so" className="scroll-mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white">
         <div className="flex items-center gap-3 p-5">
           <Avatar size="lg" className="size-14">
             {profile?.image ? <AvatarImage src={profile.image} alt={profile.name} /> : null}
@@ -230,14 +257,15 @@ export default function SettingsPage() {
             </Button>
           )}
         </div>
-        <div id="thong-ke" className="grid grid-cols-3 divide-x border-t border-slate-100 bg-slate-50/70">
+        <div id="thong-ke" className="grid grid-cols-3 md:hidden divide-x border-t border-slate-100 bg-slate-50/70">
           <ProfileMetric label="Chi tháng này" value={spendingSummary ? formatCurrency(spendingSummary.total) : '—'} tone="rose" />
           <ProfileMetric label="Giao dịch" value={spendingSummary ? String(spendingSummary.count) : '—'} tone="slate" />
           <ProfileMetric label="TB mỗi ngày" value={spendingSummary ? formatCurrency(spendingSummary.daily_average) : '—'} tone="emerald" />
         </div>
+        <Link href="/stats" className="hidden border-t border-slate-100 px-5 py-3 text-sm font-medium text-emerald-800 hover:bg-slate-50 md:block">Xem thống kê chi tiêu →</Link>
       </section>
 
-      <section className="space-y-5">
+      <section className="space-y-5 md:hidden">
         <div className="flex items-center justify-between gap-3">
           <div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h2 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h2></div>
           {period === 'daily' ? <MonthPicker month={month} onChange={setMonth} /> : <div className="flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700"><button type="button" className="px-2" onClick={() => setYear(String(Number(year) - 1))}>‹</button><span className="min-w-12 text-center">{period === 'yearly' ? '5 năm' : year}</span><button type="button" className="px-2" onClick={() => setYear(String(Number(year) + 1))}>›</button></div>}
@@ -255,13 +283,13 @@ export default function SettingsPage() {
         </> : <p className="rounded-2xl border border-slate-200 bg-white py-10 text-center text-sm text-slate-400">Chưa có khoản chi trong tháng này.</p>}
       </section>
 
-      <AiProvidersSettings />
+      <div id="ai-ca-nhan" className="scroll-mt-6"><AiProvidersSettings /></div>
 
-      <PwaReminderSettings />
+      <div id="nhac-nho" className="scroll-mt-6"><PwaReminderSettings /></div>
 
       <div className="grid gap-6">
 
-        <Card className="rounded-3xl border-border bg-white shadow-sm">
+        <Card id="danh-muc" className="scroll-mt-6 rounded-2xl border-slate-200 bg-white">
           <CardHeader className="flex flex-row items-center justify-between p-5 pb-2">
             <div>
               <CardTitle className="flex items-center gap-2 text-sm font-semibold">
@@ -359,7 +387,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-3xl border-border bg-white shadow-sm">
+        <Card id="du-lieu" className="scroll-mt-6 rounded-2xl border-slate-200 bg-white">
           <CardHeader className="p-5 pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-semibold">
               <Database className="size-4 text-blue-500" /> Dữ liệu & lưu trữ
@@ -413,6 +441,8 @@ export default function SettingsPage() {
             </Button>
           </CardContent>
         </Card>
+      </div>
+      </div>
       </div>
     </div>
   );

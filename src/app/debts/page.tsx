@@ -43,6 +43,7 @@ type Debt = {
 export default function DebtsPage() {
   const [debts, setDebts] = useState<Debt[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const { showToast } = useToast();
 
   // Add Debt Form State
@@ -55,14 +56,13 @@ export default function DebtsPage() {
 
   const fetchDebts = async () => {
     setIsLoading(true);
+    setLoadError(false);
     try {
       const res = await fetch("/api/debts");
-      if (res.ok) {
-        const data = await res.json();
-        setDebts(data);
-      }
-    } catch (error) {
-      console.error("Failed to fetch debts", error);
+      if (!res.ok) throw new Error("Failed to fetch debts");
+      setDebts(await res.json());
+    } catch {
+      setLoadError(true);
     } finally {
       setIsLoading(false);
     }
@@ -70,7 +70,6 @@ export default function DebtsPage() {
 
   useEffect(() => {
     // Initial remote data synchronization.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchDebts();
   }, []);
 
@@ -100,7 +99,8 @@ export default function DebtsPage() {
     }
   };
 
-  const activeDebts = debts.filter((d) => d.status === "active");
+  const activeDebts = debts.filter((d) => d.status === "active")
+    .sort((left, right) => (left.due_date || "9999").localeCompare(right.due_date || "9999"));
   const completedDebts = debts.filter((d) => d.status === "completed");
 
   const totalDebt = activeDebts.reduce((sum, d) => sum + d.total_amount, 0);
@@ -127,14 +127,19 @@ export default function DebtsPage() {
         </Button>
       </header>
 
-      <section className="grid max-w-5xl grid-cols-2 overflow-hidden rounded-2xl border border-border bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-border">
+      {!isLoading && !loadError && debts.length > 0 && <section className="grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200 bg-white sm:grid-cols-3 sm:divide-x sm:divide-border">
         <DebtMetric label="Tổng nợ gốc" value={totalDebt} icon={<Calculator className="size-4" />} />
         <DebtMetric label="Đã thanh toán" value={totalPaid} tone="positive" />
         <DebtMetric label="Còn phải trả" value={remainingDebt} className="col-span-2 sm:col-span-1" />
-      </section>
+      </section>}
 
-      <Tabs defaultValue="active" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 rounded-xl mb-4">
+      {loadError ? (
+        <div role="alert" className="flex items-center justify-between rounded-xl border border-rose-200 bg-white p-4">
+          <p className="text-sm text-rose-800">Không tải được danh sách công nợ.</p>
+          <Button variant="outline" onClick={() => void fetchDebts()}>Thử lại</Button>
+        </div>
+      ) : <Tabs defaultValue="active" className="w-full">
+        <TabsList className="mb-3 grid w-full grid-cols-2 rounded-xl md:max-w-xs">
           <TabsTrigger value="active" className="rounded-lg">Đang trả ({activeDebts.length})</TabsTrigger>
           <TabsTrigger value="completed" className="rounded-lg">Đã xong ({completedDebts.length})</TabsTrigger>
         </TabsList>
@@ -220,7 +225,7 @@ export default function DebtsPage() {
             <DebtTable debts={completedDebts} active={false} />
           </>}
         </TabsContent>
-      </Tabs>
+      </Tabs>}
 
       {/* FAB Add Debt */}
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
@@ -291,5 +296,5 @@ function DebtMetric({ label, value, icon, tone = 'default', className }: { label
 
 function DebtTable({ debts: rows, active }: { debts: Debt[]; active: boolean }) {
   if (rows.length === 0) return null;
-  return <section className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white xl:block"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-6 py-3 font-medium">Khoản nợ</th><th className="px-4 py-3 font-medium">Chủ nợ</th><th className="px-4 py-3 font-medium">Tiến độ</th><th className="px-4 py-3 font-medium">Hạn trả</th><th className="px-6 py-3 text-right font-medium">Còn lại</th></tr></thead><tbody className="divide-y divide-slate-100">{rows.map((debt) => { const pct = getPercentage(debt.paid_amount, debt.total_amount); return <tr key={debt.id} className="hover:bg-slate-50/70"><td className="px-6 py-4"><Link href={`/debts/${debt.id}`} className="font-semibold text-slate-800 hover:text-sky-800">{debt.name}</Link></td><td className="px-4 py-4 text-slate-600">{debt.creditor}</td><td className="min-w-48 px-4 py-4"><div className="flex items-center gap-3"><Progress value={pct} className="h-2 flex-1" indicatorColor={active ? 'bg-emerald-500' : 'bg-slate-400'} /><span className="w-10 text-right text-xs tabular-nums text-slate-500">{pct}%</span></div><p className="mt-1 text-xs tabular-nums text-slate-400">{formatCurrency(debt.paid_amount)} / {formatCurrency(debt.total_amount)}</p></td><td className="whitespace-nowrap px-4 py-4 text-slate-600">{debt.due_date ? new Intl.DateTimeFormat('vi-VN').format(new Date(`${debt.due_date}T00:00:00`)) : '—'}</td><td className="whitespace-nowrap px-6 py-4 text-right font-semibold tabular-nums text-slate-800">{formatCurrency(Math.max(0, debt.total_amount - debt.paid_amount))}</td></tr>; })}</tbody></table></div></section>;
+  return <section className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white xl:block"><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-6 py-3 font-medium">Khoản nợ</th><th className="px-4 py-3 font-medium">Chủ nợ</th><th className="px-4 py-3 font-medium">Tiến độ</th><th className="px-4 py-3 font-medium">Hạn trả</th><th className="px-6 py-3 text-right font-medium">Còn lại</th><th className="w-24 px-4 py-3"><span className="sr-only">Chi tiết</span></th></tr></thead><tbody className="divide-y divide-slate-100">{rows.map((debt) => { const pct = Math.round(getPercentage(debt.paid_amount, debt.total_amount)); const overdue = active && debt.due_date && debt.due_date < getVietnamToday(); return <tr key={debt.id} className="hover:bg-slate-50/70"><td className="px-6 py-4"><Link href={`/debts/${debt.id}`} className="font-semibold text-slate-800 hover:text-sky-800">{debt.name}</Link></td><td className="px-4 py-4 text-slate-600">{debt.creditor}</td><td className="min-w-48 px-4 py-4"><div className="flex items-center gap-3"><Progress value={pct} className="h-2 flex-1" indicatorColor={active ? 'bg-emerald-500' : 'bg-slate-400'} /><span className="w-10 text-right text-xs tabular-nums text-slate-500">{pct}%</span></div><p className="mt-1 text-xs tabular-nums text-slate-400">{formatCurrency(debt.paid_amount)} / {formatCurrency(debt.total_amount)}</p></td><td className={cn("whitespace-nowrap px-4 py-4", overdue ? "text-rose-700" : "text-slate-600")}>{debt.due_date ? new Intl.DateTimeFormat('vi-VN').format(new Date(`${debt.due_date}T00:00:00`)) : '—'}{overdue && <span className="mt-1 block text-xs font-medium">Quá hạn</span>}</td><td className="whitespace-nowrap px-6 py-4 text-right font-semibold tabular-nums text-slate-800">{formatCurrency(Math.max(0, debt.total_amount - debt.paid_amount))}</td><td className="px-4 py-4"><Link href={`/debts/${debt.id}`} className="text-xs font-medium text-emerald-800 hover:underline" aria-label={`Chi tiết ${debt.name}`}>Chi tiết</Link></td></tr>; })}</tbody></table></div></section>;
 }

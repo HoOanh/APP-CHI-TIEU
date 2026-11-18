@@ -23,9 +23,21 @@ interface CategoryOption {
   color: string;
 }
 
+interface TransactionSaveResult {
+  id: string | number;
+  amount: number;
+  description: string;
+  category_id: string | number;
+  category_name: string;
+  expense_date: string;
+  note: string | null;
+  type: 'income' | 'expense';
+}
+
 interface ManualTransactionDialogProps {
-  onSaved?: () => void;
+  onSaved?: (transaction?: TransactionSaveResult) => void;
   compact?: boolean;
+  iconOnMobile?: boolean;
   transaction?: {
     id: string;
     amount: number;
@@ -52,7 +64,7 @@ function FieldError({ message }: { message?: string }) {
   return message ? <p role="alert" className="mt-1 text-xs font-medium text-red-700">{message}</p> : null;
 }
 
-export function ManualTransactionDialog({ onSaved, compact = false, transaction }: ManualTransactionDialogProps) {
+export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile = false, transaction }: ManualTransactionDialogProps) {
   const [open, setOpen] = useState(false);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const { showToast } = useToast();
@@ -150,21 +162,21 @@ export function ManualTransactionDialog({ onSaved, compact = false, transaction 
       }
       return;
     }
-    const result = await response.json() as { error?: string; budgetAlert?: { title: string; message: string; severity: 'warning' | 'danger' } };
+    const result = await response.json() as TransactionSaveResult & { error?: string; budgetAlert?: { title: string; message: string; severity: 'warning' | 'danger' } };
     if (!response.ok) {
       showToast(result.error || 'Không thể lưu giao dịch.', 'error');
       return;
     }
     setOpen(false);
     resetForm();
-    onSaved?.();
+    onSaved?.(result);
     showToast(result.budgetAlert?.title || (transaction ? 'Đã cập nhật giao dịch' : 'Đã lưu giao dịch'), result.budgetAlert?.severity === 'danger' ? 'error' : 'success', result.budgetAlert?.message);
   }
 
   return (
     <>
-      <Button type="button" variant={transaction ? 'ghost' : compact ? 'outline' : 'default'} size={transaction ? 'icon-sm' : 'default'} aria-label={transaction ? `Sửa ${transaction.description}` : undefined} className={transaction ? 'size-8 text-slate-400 hover:bg-emerald-50 hover:text-emerald-700' : 'rounded-lg'} onClick={() => setOpen(true)}>
-        <PenLine className="size-4" />{transaction ? null : ' Nhập thủ công'}
+      <Button type="button" variant={transaction ? 'ghost' : compact ? 'outline' : 'default'} size={transaction ? 'icon-sm' : 'default'} aria-label={transaction ? `Sửa ${transaction.description}` : 'Nhập thủ công'} className={transaction ? 'size-8 text-slate-400 hover:bg-emerald-50 hover:text-emerald-700' : 'rounded-lg'} onClick={() => setOpen(true)}>
+        <PenLine className="size-4" />{transaction ? null : <span className={iconOnMobile ? "hidden sm:inline" : undefined}>Nhập thủ công</span>}
       </Button>
       <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) resetForm(); }}>
         <DialogContent className="grid max-h-[calc(100dvh-1rem)] w-[min(560px,calc(100vw-1rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(560px,calc(100vw-2rem))]">

@@ -64,7 +64,10 @@ export default function LoginPage() {
               <p className="mb-3 text-sm font-medium text-slate-600">Đăng nhập để tiếp tục</p>
               <Button
                 size="lg"
-                onClick={() => signIn('google', { callbackUrl: '/' })}
+                onClick={() => {
+                  const target = new URLSearchParams(window.location.search).get('redirectTo');
+                  void signIn('google', { redirectTo: target === '/chat' ? '/chat' : '/' });
+                }}
                 className="h-12 w-full rounded-xl bg-[#00bc7c] text-sm font-semibold shadow-[0_12px_24px_-12px_rgba(0,188,124,0.8)] hover:bg-[#00a970]"
               >
                 <GoogleMark />

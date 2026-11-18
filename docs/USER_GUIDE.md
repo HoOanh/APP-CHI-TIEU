@@ -74,7 +74,7 @@ Dashboard là trang chính, hiển thị tổng quan tài chính tháng hiện t
 ### Cách sử dụng
 
 #### Ghi chi tiêu bằng text
-Gõ tự nhiên, AI sẽ tự nhận diện:
+Gõ tự nhiên rồi gửi. AI nhận diện và lưu giao dịch hợp lệ ngay. Dùng nút **Sửa** trên thẻ đã lưu hoặc trong danh sách **Giao dịch** để cập nhật.
 
 ```
 ✅ "ăn phở bò 50k"           → -50.000đ, 🍜 Ăn uống
@@ -83,6 +83,12 @@ Gõ tự nhiên, AI sẽ tự nhận diện:
 ✅ "tiền điện tháng 7: 350k" → -350.000đ, 📄 Hóa đơn
 ✅ "gym 3 tháng 1.2tr"       → -1.200.000đ, 💊 Sức khỏe
 ```
+
+#### Mở thẳng Ghi nhanh
+Chọn **Lối tắt** ở Tổng quan hoặc trong Chat. Trên iPhone, mở trang Ghi nhanh bằng Safari rồi chọn **Chia sẻ → Thêm vào màn hình chính**. Bật **Mở dưới dạng ứng dụng web** nếu có. Trên Mac, chọn **Tải lối tắt cho Mac** và mở file `.webloc`, hoặc dùng **Tệp → Thêm vào Dock** trong Safari. Các lối tắt mở Chat bằng phiên đăng nhập web.
+
+#### Ghi bằng giọng nói
+Mở **Ghi nhanh**, bấm mic cạnh ô nhập và nói “cà phê bốn mươi lăm nghìn”. Khi nhận xong, Chat tự gửi và lưu khoản hợp lệ. AI tự chọn danh mục, kể cả khi chưa có hũ ngân sách. Khoản chưa rõ danh mục được lưu vào **Chưa phân loại**. Nếu trình duyệt không nhận giọng, dùng mic bàn phím rồi bấm **Gửi**.
 
 #### Ghi thu nhập
 AI tự phân biệt thu nhập dựa trên ngữ cảnh:
@@ -97,7 +103,7 @@ AI tự phân biệt thu nhập dựa trên ngữ cảnh:
 1. Nhấn icon 📷 (bên trái ô input)
 2. Chọn ảnh chụp hóa đơn, biên lai, hoặc màn hình chuyển khoản
 3. AI sẽ tự trích xuất: **số tiền**, **mô tả**, **danh mục**, **ngày**
-4. Xác nhận để lưu
+4. Giao dịch hợp lệ được lưu ngay và hiển thị trong chat
 
 > **Hỗ trợ**: Ảnh chụp chuyển khoản ngân hàng, hóa đơn nhà hàng, bill mua sắm, receipt thanh toán online...
 

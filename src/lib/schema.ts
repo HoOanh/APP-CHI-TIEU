@@ -1,5 +1,7 @@
 import type { Client } from '@libsql/client';
 
+export const UNCLASSIFIED_EXPENSE = 'Chưa phân loại';
+
 export async function initializeDatabase(db: Client) {
   await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
@@ -34,6 +36,12 @@ export async function initializeDatabase(db: Client) {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (category_id) REFERENCES categories(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS expense_chat_requests (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      request_id TEXT NOT NULL,
+      PRIMARY KEY (user_id, request_id)
     );
 
     CREATE TABLE IF NOT EXISTS budget_jars (
@@ -219,14 +227,13 @@ export async function initializeDatabase(db: Client) {
     ['Nhậu', 'beer', '#A855F7'],
     ['AI', 'bot', '#14B8A6'],
     ['Thu nhập', 'banknote', '#00BC7C'],
+    [UNCLASSIFIED_EXPENSE, 'tag', '#64748B'],
   ];
 
-  for (const [name, icon, color] of defaults) {
-    await db.execute({
-      sql: 'INSERT OR IGNORE INTO categories (user_id, name, icon, color) VALUES (NULL, ?, ?, ?)',
-      args: [name, icon, color],
-    });
-  }
+  await db.batch(defaults.map(([name, icon, color]) => ({
+    sql: 'INSERT OR IGNORE INTO categories (user_id, name, icon, color) VALUES (NULL, ?, ?, ?)',
+    args: [name, icon, color],
+  })), 'write');
 
   // Remove obsolete global defaults only when they are not referenced. Historical
   // transactions and existing budget jars keep their original category intact.
