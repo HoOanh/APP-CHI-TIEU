@@ -178,6 +178,7 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
           ? 'warning'
           : 'success',
       result.budgetAlert?.message,
+      { strobe: !transaction && result.budgetAlert?.severity === 'danger' },
     );
   }
 

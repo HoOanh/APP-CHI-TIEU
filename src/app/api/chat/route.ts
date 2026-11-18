@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
                 LEFT JOIN categories c ON c.id = e.category_id
                 WHERE e.user_id = ?
                 ORDER BY e.expense_date DESC, e.created_at DESC
-                LIMIT 120`,
+                LIMIT 50`,
           args: [user.id],
         },
       ], 'read');
@@ -87,12 +87,20 @@ export async function POST(request: NextRequest) {
       const expenseCategories = categories.filter((category) => category.name !== 'Thu nhập');
       const unclassifiedExpense = expenseCategories.find((category) => category.name === UNCLASSIFIED_EXPENSE);
       const defaultIncome = categories.find((category) => category.name === 'Thu nhập');
-      const historyContext = historyResult.rows
-        .map(
-          (row) =>
-            `- [${String(row.type)}] ${String(row.description)} | note: ${String(row.note || '')} => ${String(row.category_name || 'Khác')}`,
-        )
-        .join('\n');
+      const seenHistoryKeys = new Set<string>();
+      const historyLines: string[] = [];
+      for (const row of historyResult.rows) {
+        const typeStr = String(row.type);
+        const descStr = String(row.description).trim();
+        const key = `${typeStr}:${descStr.toLocaleLowerCase('vi')}`;
+        if (!descStr || seenHistoryKeys.has(key)) continue;
+        seenHistoryKeys.add(key);
+        historyLines.push(
+          `- [${typeStr}] ${descStr} | note: ${String(row.note || '')} => ${String(row.category_name || 'Khác')}`,
+        );
+        if (historyLines.length >= 25) break;
+      }
+      const historyContext = historyLines.join('\n');
       const categoryPolicy = {
         expenseCategories: expenseCategories.map((category) => category.name),
         preferredExpenseCategories: budgetCategories,

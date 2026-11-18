@@ -12,6 +12,7 @@ interface ToastItem {
   description?: string
   type: ToastType
   phase: "strobe" | "toast"
+  isAlarm: boolean
 }
 
 const emptySnapshot: ToastItem[] = []
@@ -37,10 +38,10 @@ function isOverspendAlert(type: ToastType, title: string, description?: string) 
 }
 
 const toast = {
-  add(input: { title: string; description?: string; type?: ToastType }) {
+  add(input: { title: string; description?: string; type?: ToastType; strobe?: boolean }) {
     const id = `toast-${++toastSequence}`
     const type = input.type || "info"
-    const shouldStrobe = isOverspendAlert(type, input.title, input.description)
+    const shouldStrobe = Boolean(input.strobe) && isOverspendAlert(type, input.title, input.description)
     const phase: "strobe" | "toast" = shouldStrobe ? "strobe" : "toast"
 
     publish([
@@ -51,6 +52,7 @@ const toast = {
         description: input.description,
         type,
         phase,
+        isAlarm: shouldStrobe,
       },
     ])
 
@@ -90,12 +92,12 @@ const toast = {
   },
 }
 
-function ToastIcon({ type }: { type: ToastType }) {
-  if (type === "error") {
+function ToastIcon({ type, isAlarm }: { type: ToastType; isAlarm?: boolean }) {
+  if (isAlarm) {
     return <Siren aria-hidden className="mt-0.5 size-5 shrink-0 animate-bounce text-white" />
   }
-  const Icon = type === "success" ? CheckCircle2 : type === "warning" ? TriangleAlert : type === "loading" ? LoaderCircle : Info
-  return <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", type === "success" && "text-green-700", type === "warning" && "text-amber-700", type === "loading" && "animate-spin text-sky-700", type === "info" && "text-sky-700")} />
+  const Icon = type === "success" ? CheckCircle2 : type === "warning" || type === "error" ? TriangleAlert : type === "loading" ? LoaderCircle : Info
+  return <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", type === "success" && "text-green-700", type === "warning" && "text-amber-700", type === "error" && "text-rose-600", type === "loading" && "animate-spin text-sky-700", type === "info" && "text-sky-700")} />
 }
 
 const MATRIX_STREAKS = [
@@ -245,7 +247,7 @@ function Toaster() {
   const toasts = React.useSyncExternalStore(subscribe, () => items, () => emptySnapshot)
   const activeStrobeToast = toasts.find((item) => item.phase === "strobe")
   const visibleToasts = toasts.filter((item) => item.phase === "toast")
-  const hasDangerToast = visibleToasts.some((item) => item.type === "error")
+  const hasDangerToast = visibleToasts.some((item) => item.isAlarm)
 
   return (
     <ToastPrimitive.Provider swipeDirection="right" duration={6000}>
@@ -265,7 +267,7 @@ function Toaster() {
 
       <ToastPrimitive.Viewport className="pointer-events-none fixed inset-x-3 top-4 z-[100] mx-auto flex max-h-[calc(100dvh-2rem)] w-auto max-w-md flex-col gap-2.5 outline-none sm:top-auto sm:right-4 sm:bottom-4 sm:left-auto sm:mx-0 sm:w-full">
         {visibleToasts.map((item) => {
-          const isDanger = item.type === "error"
+          const isDanger = item.isAlarm
           const isWarning = item.type === "warning"
 
           return (
@@ -283,7 +285,7 @@ function Toaster() {
                     : "border-slate-200 bg-white text-slate-900",
               )}
             >
-              <ToastIcon type={item.type} />
+              <ToastIcon type={item.type} isAlarm={isDanger} />
               <div className="min-w-0 flex-1">
                 <ToastPrimitive.Title className={cn("text-sm font-bold leading-5", isDanger && "text-white")}>
                   {item.title}

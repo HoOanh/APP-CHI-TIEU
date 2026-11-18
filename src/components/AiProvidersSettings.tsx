@@ -286,7 +286,7 @@ export function AiProvidersSettings() {
         <div>
           <h2 className="text-base font-semibold">AI cá nhân</h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">Provider, API key và model chỉ thuộc tài khoản của ĐẠI CA. Key được mã hóa; hệ thống chỉ hiển thị 4 ký tự cuối.</p>
-          {fallbackAvailable ? <p className="mt-2 text-xs text-amber-700">Đang có cấu hình Gemini cũ từ {fallbackSource === 'account' ? 'tài khoản' : 'máy chủ'} làm dự phòng cho đến khi chọn model cá nhân.</p> : null}
+          {fallbackAvailable ? <p className="mt-2 text-xs text-amber-700">Nếu chưa cấu hình model riêng, hệ thống tự động dùng lần lượt: <strong>Gemini 3.5 Flash Lite → Gemini 3.1 Flash Lite → Gemini 2.5 Flash Lite</strong> từ {fallbackSource === 'account' ? 'tài khoản' : 'máy chủ'} (tự chuyển model tiếp theo nếu model đầu hết hạn mức hoặc quá tải).</p> : null}
         </div>
       </div>
 

@@ -47,6 +47,17 @@ function decodeVapidKey(value: string) {
   return Uint8Array.from(raw, (character) => character.charCodeAt(0));
 }
 
+async function getDevicePushSettings() {
+  let endpoint = '';
+  if ('serviceWorker' in navigator) {
+    const registration = (await navigator.serviceWorker.getRegistration('/'))
+      ?? (await navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined));
+    const subscription = await registration?.pushManager?.getSubscription().catch(() => null);
+    endpoint = subscription?.endpoint ?? '';
+  }
+  return fetch('/api/pwa/push', { headers: { 'X-Push-Endpoint': endpoint } });
+}
+
 export function PwaReminderSettings() {
   const { showToast } = useToast();
   const [reminders, setReminders] = useState(DEFAULT_REMINDERS);
@@ -57,22 +68,16 @@ export function PwaReminderSettings() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([fetch('/api/pwa/reminders'), fetch('/api/pwa/push')])
+    Promise.all([fetch('/api/pwa/reminders'), getDevicePushSettings()])
       .then(async ([remindersResponse, pushResponse]) => {
         if (!remindersResponse.ok || !pushResponse.ok) throw new Error('Không thể tải cài đặt nhắc nhở.');
         const [reminderData, serverPushData] = await Promise.all([
           remindersResponse.json() as Promise<ReminderSettings>,
           pushResponse.json() as Promise<PushSettings>,
         ]);
-        let hasDeviceSubscription = false;
-        if ('serviceWorker' in navigator) {
-          const registration = (await navigator.serviceWorker.getRegistration('/'))
-            ?? (await navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined));
-          hasDeviceSubscription = Boolean(await registration?.pushManager?.getSubscription().catch(() => null));
-        }
         if (active) {
           setReminders(reminderData);
-          setPush({ ...serverPushData, subscribed: hasDeviceSubscription });
+          setPush(serverPushData);
         }
       })
       .catch(() => {
@@ -115,7 +120,7 @@ export function PwaReminderSettings() {
       }
       const registration = await navigator.serviceWorker.ready;
       const currentSubscription = await registration.pushManager.getSubscription();
-      if (push.subscribed || currentSubscription) {
+      if (push.subscribed) {
         const endpoint = currentSubscription?.endpoint;
         if (endpoint) {
           const response = await fetch('/api/pwa/push', {
@@ -142,7 +147,7 @@ export function PwaReminderSettings() {
 
       let subscription: PushSubscription;
       try {
-        subscription = await registration.pushManager.subscribe({
+        subscription = currentSubscription ?? await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: decodeVapidKey(push.publicKey),
         });
@@ -162,7 +167,7 @@ export function PwaReminderSettings() {
         body: JSON.stringify(subscription.toJSON()),
       });
       if (!response.ok) {
-        await subscription.unsubscribe();
+        if (!currentSubscription) await subscription.unsubscribe();
         const errorData = await response.json().catch(() => null) as { error?: string } | null;
         throw new Error(errorData?.error || 'Không thể đăng ký thiết bị nhận thông báo.');
       }

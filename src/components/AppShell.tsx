@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -21,7 +21,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/useToast';
 import { syncOfflineTransactions } from '@/lib/offline-queue';
-import { cn, formatCurrency, getCurrentMonth } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { LinkPending } from '@/components/LinkPending';
 
 interface AppShellUser {
@@ -34,15 +34,6 @@ interface AppShellUser {
 interface AppShellProps {
   children: React.ReactNode;
   user: AppShellUser | null;
-}
-
-interface BudgetAlertResponse {
-  id: string;
-  budget_amount: number;
-  category_name: string;
-  spent_amount: number;
-  today_spent?: number;
-  effective_daily_limit?: number;
 }
 
 const desktopNavigation = [
@@ -67,44 +58,9 @@ function getInitials(name: string) {
 export function AppShell({ children, user }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const hasCheckedBudgetAlerts = useRef(false);
   const { showToast } = useToast();
   const isPublicRoute = pathname.startsWith('/login');
   const isChatRoute = pathname === '/chat' || pathname === '/debt-chat';
-
-  useEffect(() => {
-    if (!user || isPublicRoute || hasCheckedBudgetAlerts.current) return;
-    hasCheckedBudgetAlerts.current = true;
-    if (pathname === '/') return;
-
-    const timer = window.setTimeout(async () => {
-      const response = await fetch(`/api/dashboard/budget-alerts?month=${getCurrentMonth()}`);
-      if (!response.ok) return;
-      const alerts: BudgetAlertResponse[] = await response.json();
-      alerts.forEach((alert) => {
-        const spent = Number(alert.spent_amount) || 0;
-        const limit = Number(alert.budget_amount) || 0;
-        const todaySpent = Number(alert.today_spent) || 0;
-        const dailyLimit = Number(alert.effective_daily_limit) || 0;
-
-        if (limit > 0 && spent >= limit) {
-          showToast(
-            `🚨 THỦNG NGÂN SÁCH THÁNG — ${alert.category_name}`,
-            'error',
-            `Đã chi ${formatCurrency(spent)}/${formatCurrency(limit)}${spent > limit ? `, lố ${formatCurrency(spent - limit)}` : ''}. Bớt vung tay ngay đại ca!`,
-          );
-        } else if (dailyLimit > 0 && todaySpent > dailyLimit) {
-          showToast(
-            `🚨 CHI LỐ HẠN MỨC NGÀY — ${alert.category_name}`,
-            'error',
-            `Hôm nay đã chi ${formatCurrency(todaySpent)}/${formatCurrency(dailyLimit)} (vượt lố ${formatCurrency(todaySpent - dailyLimit)}). Dừng chi hũ này hôm nay nhé!`,
-          );
-        }
-      });
-    }, 1500);
-
-    return () => window.clearTimeout(timer);
-  }, [isPublicRoute, pathname, showToast, user]);
 
   useEffect(() => {
     if (!user || isPublicRoute) return;

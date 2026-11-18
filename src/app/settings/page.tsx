@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import dynamic from 'next/dynamic';
+import { useSWRConfig } from 'swr';
 import {
   ArrowLeft,
   Database,
@@ -18,6 +19,16 @@ import {
   X,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -67,6 +78,7 @@ function getInitials(name: string) {
 export default function SettingsPage() {
   const router = useRouter();
   const { showToast } = useToast();
+  const { mutate } = useSWRConfig();
   const [categories, setCategories] = useState<Category[]>([]);
   const [stats, setStats] = useState({ expenses: 0, debts: 0 });
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
@@ -76,6 +88,10 @@ export default function SettingsPage() {
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [isLoading, setIsLoading] = useState(true);
   const [isClearingPwaCache, setIsClearingPwaCache] = useState(false);
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+  const [dataRevision, setDataRevision] = useState(0);
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState({
     name: '',
@@ -84,13 +100,15 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
+    const controller = new AbortController();
+    const options = { signal: controller.signal };
     async function loadSettings() {
       try {
         const [categoryResponse, statsResponse, profileResponse] =
           await Promise.all([
-            fetch('/api/categories'),
-            fetch('/api/settings/stats'),
-            fetch('/api/profile'),
+            fetch('/api/categories', options),
+            fetch('/api/settings/stats', options),
+            fetch('/api/profile', options),
           ]);
 
         if (categoryResponse.ok) {
@@ -101,14 +119,15 @@ export default function SettingsPage() {
         }
         if (profileResponse?.ok) setProfile(await profileResponse.json() as ProfileResponse);
       } catch {
-        showToast('Không thể tải cài đặt', 'error');
+        if (!controller.signal.aborted) showToast('Không thể tải cài đặt', 'error');
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     }
 
     void loadSettings();
-  }, [showToast]);
+    return () => controller.abort();
+  }, [dataRevision, showToast]);
 
   useEffect(() => {
     const mobile = window.matchMedia('(max-width: 767px)');
@@ -129,7 +148,7 @@ export default function SettingsPage() {
       controller.abort();
       mobile.removeEventListener('change', load);
     };
-  }, [month, period, showToast, year]);
+  }, [dataRevision, month, period, showToast, year]);
 
   async function addCategory() {
     if (!newCategory.name.trim()) return;
@@ -212,6 +231,39 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleResetAccountData() {
+    const confirmation = resetConfirmation.trim();
+    if (isResetting || confirmation !== 'XÓA') return;
+
+    setIsResetting(true);
+    try {
+      const response = await fetch('/api/settings/account-data', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation }),
+      });
+      if (!response.ok) throw new Error('Không thể xóa dữ liệu tài khoản.');
+
+      setCategories((current) => current.filter((category) => category.is_system));
+      setStats({ expenses: 0, debts: 0 });
+      setSpendingSummary(null);
+      setDataRevision((current) => current + 1);
+      void mutate(
+        (key) => typeof key === 'string' && (key.startsWith('/api/dashboard?') || key.startsWith('/api/expenses/stats?')),
+        undefined,
+        { revalidate: false },
+      );
+      router.refresh();
+      setResetConfirmation('');
+      setIsResetDialogOpen(false);
+      showToast('Đã xóa dữ liệu tài khoản', 'success');
+    } catch {
+      showToast('Không thể xóa dữ liệu tài khoản', 'error');
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-7xl space-y-6 bg-background p-4 pb-nav md:px-8 md:py-7">
       <header className="flex items-center gap-3 pt-2">
@@ -283,9 +335,9 @@ export default function SettingsPage() {
         </> : <p className="rounded-2xl border border-slate-200 bg-white py-10 text-center text-sm text-slate-400">Chưa có khoản chi trong tháng này.</p>}
       </section>
 
-      <div id="ai-ca-nhan" className="scroll-mt-6"><AiProvidersSettings /></div>
+      <div id="ai-ca-nhan" className="scroll-mt-6"><AiProvidersSettings key={dataRevision} /></div>
 
-      <div id="nhac-nho" className="scroll-mt-6"><PwaReminderSettings /></div>
+      <div id="nhac-nho" className="scroll-mt-6"><PwaReminderSettings key={dataRevision} /></div>
 
       <div className="grid gap-6">
 
@@ -413,6 +465,60 @@ export default function SettingsPage() {
             >
               <Download className="size-4" /> Xuất toàn bộ dữ liệu JSON
             </Button>
+            <div className="flex flex-col gap-3 border-t border-border pt-4 sm:col-span-full sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Làm sạch dữ liệu đã lưu trên tài khoản và tiếp tục dùng cùng tài khoản đăng nhập.
+              </p>
+              <AlertDialog
+                open={isResetDialogOpen}
+                onOpenChange={(open) => {
+                  if (isResetting) return;
+                  if (!open) setResetConfirmation('');
+                  setIsResetDialogOpen(open);
+                }}
+              >
+                <AlertDialogTrigger asChild>
+                  <Button type="button" variant="destructive" className="min-h-11 rounded-2xl">
+                    <Trash2 className="size-4" /> Xóa dữ liệu tài khoản
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Xóa dữ liệu tài khoản?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Giao dịch, ngân sách, khoản nợ, danh mục tự tạo, cấu hình AI và lịch nhắc sẽ bị xóa vĩnh viễn.
+                      Phiên đăng nhập và danh mục mặc định được giữ lại. Bản nháp offline vẫn nằm trên thiết bị.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <form
+                    className="grid gap-4"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void handleResetAccountData();
+                    }}
+                  >
+                    <div className="grid gap-2">
+                      <label htmlFor="reset-account-confirmation" className="text-sm font-medium">
+                        Nhập <strong>XÓA</strong> để xác nhận
+                      </label>
+                      <Input
+                        id="reset-account-confirmation"
+                        value={resetConfirmation}
+                        onChange={(event) => setResetConfirmation(event.target.value)}
+                        disabled={isResetting}
+                        autoComplete="off"
+                      />
+                    </div>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel type="button" disabled={isResetting}>Hủy</AlertDialogCancel>
+                      <Button type="submit" variant="destructive" disabled={isResetting || resetConfirmation.trim() !== 'XÓA'}>
+                        {isResetting ? 'Đang xóa...' : 'Xóa vĩnh viễn'}
+                      </Button>
+                    </AlertDialogFooter>
+                  </form>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </CardContent>
         </Card>
 

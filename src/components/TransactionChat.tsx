@@ -205,7 +205,12 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
       }]);
       refreshData();
       for (const alert of data.budgetAlerts ?? []) {
-        showToast(alert.title, alert.severity === 'danger' ? 'error' : 'warning', alert.message);
+        showToast(
+          alert.title,
+          alert.severity === 'danger' ? 'error' : 'warning',
+          alert.message,
+          { strobe: alert.severity === 'danger' },
+        );
       }
       if (offlineNoteId) {
         await removeOfflineQueueEntry(offlineNoteId).catch((error: unknown) => console.error(error));

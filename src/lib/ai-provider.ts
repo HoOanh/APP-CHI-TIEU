@@ -121,26 +121,58 @@ export async function getProviderSecret(userId: number, providerId: number) {
   return decryptSecret(encrypted);
 }
 
+const DEFAULT_GEMINI_FALLBACK_MODELS = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+] as const;
+
 export async function getActiveAiModel(userId: number) {
   const db = await getDb();
   const result = await db.execute({
     sql: `SELECT p.id AS provider_id, p.protocol, p.base_url, p.secret_encrypted,
                  p.default_model_id, m.model_id
           FROM ai_providers p
-          JOIN ai_models m ON m.provider_id = p.id AND m.user_id = p.user_id
-          WHERE p.user_id = ? AND p.enabled = 1 AND m.enabled = 1
-            AND m.model_id = p.default_model_id
-          ORDER BY p.updated_at DESC LIMIT 1`,
+          LEFT JOIN ai_models m ON m.provider_id = p.id AND m.user_id = p.user_id AND m.enabled = 1
+          WHERE p.user_id = ? AND p.enabled = 1
+          ORDER BY p.updated_at DESC,
+                   CASE WHEN m.model_id = p.default_model_id THEN 0 ELSE 1 END,
+                   m.position ASC,
+                   m.id ASC`,
     args: [userId],
   });
-  const row = result.rows[0];
-  if (!row) return null;
+  const firstRow = result.rows[0];
+  if (!firstRow) return null;
+
+  const providerId = Number(firstRow.provider_id);
+  const protocol = firstRow.protocol === 'gemini' ? 'gemini' as const : 'openai_compatible' as const;
+  const configuredModels: string[] = [];
+
+  for (const row of result.rows) {
+    if (Number(row.provider_id) !== providerId) continue;
+    const modelId = typeof row.model_id === 'string' ? row.model_id.trim() : '';
+    if (modelId && !configuredModels.includes(modelId)) {
+      configuredModels.push(modelId);
+    }
+  }
+
+  if (protocol === 'gemini') {
+    for (const fallbackModel of DEFAULT_GEMINI_FALLBACK_MODELS) {
+      if (!configuredModels.includes(fallbackModel)) {
+        configuredModels.push(fallbackModel);
+      }
+    }
+  }
+
+  if (!configuredModels.length) return null;
+
   return {
-    providerId: Number(row.provider_id),
-    protocol: row.protocol === 'gemini' ? 'gemini' as const : 'openai_compatible' as const,
-    baseUrl: String(row.base_url),
-    apiKey: decryptSecret(String(row.secret_encrypted)),
-    modelId: String(row.model_id),
+    providerId,
+    protocol,
+    baseUrl: String(firstRow.base_url),
+    apiKey: decryptSecret(String(firstRow.secret_encrypted)),
+    modelId: configuredModels[0],
+    modelIds: configuredModels,
   };
 }
 
@@ -154,78 +186,96 @@ export async function callConfiguredAi(
   if (images.some((item) => item.mimeType.startsWith('audio/')) && config.protocol !== 'gemini') {
     return null;
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000);
-  try {
-    await assertPublicProviderHost(config.baseUrl);
-    if (config.protocol === 'gemini') {
-      const parts: Array<Record<string, unknown>> = [{ text: prompt }, ...images.map((image) => ({
-        inlineData: { mimeType: image.mimeType, data: image.base64Data },
-      }))];
-      const response = await fetch(
-        `${config.baseUrl}/models/${encodeURIComponent(config.modelId)}:generateContent`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.apiKey },
-          body: JSON.stringify({ contents: [{ role: 'user', parts }] }),
-          redirect: 'error',
-          signal: controller.signal,
+  await assertPublicProviderHost(config.baseUrl);
+  const errors: string[] = [];
+
+  for (const modelId of config.modelIds) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12_000);
+    try {
+      if (config.protocol === 'gemini') {
+        const parts: Array<Record<string, unknown>> = [{ text: prompt }, ...images.map((image) => ({
+          inlineData: { mimeType: image.mimeType, data: image.base64Data },
+        }))];
+        const response = await fetch(
+          `${config.baseUrl}/models/${encodeURIComponent(modelId)}:generateContent`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.apiKey },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts }],
+              generationConfig: {
+                temperature: 0.1,
+                thinkingConfig: modelId.startsWith('gemini-3')
+                  ? { thinkingLevel: 'MINIMAL' }
+                  : { thinkingBudget: 0 },
+              },
+            }),
+            redirect: 'error',
+            signal: controller.signal,
+          },
+        );
+        if (!response.ok) throw new Error(`Provider trả về lỗi HTTP ${response.status}.`);
+        const payload: unknown = await response.json();
+        if (!isRecord(payload)) throw new Error('Provider trả dữ liệu không hợp lệ.');
+        const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+        const first = candidates[0];
+        if (!isRecord(first) || !isRecord(first.content) || !Array.isArray(first.content.parts)) {
+          throw new Error('Provider không trả nội dung văn bản.');
+        }
+        return first.content.parts.flatMap((part) =>
+          isRecord(part) && typeof part.text === 'string' ? [part.text] : [],
+        ).join('\n');
+      }
+
+      const content: Array<Record<string, unknown>> = [{ type: 'text', text: prompt }];
+      for (const image of images) {
+        content.push({
+          type: 'image_url',
+          image_url: { url: `data:${image.mimeType};base64,${image.base64Data}` },
+        });
+      }
+      const response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${config.apiKey}`,
         },
-      );
+        body: JSON.stringify({
+          model: modelId,
+          messages: [{ role: 'user', content: images.length ? content : prompt }],
+          temperature: 0.1,
+        }),
+        redirect: 'error',
+        signal: controller.signal,
+      });
       if (!response.ok) throw new Error(`Provider trả về lỗi HTTP ${response.status}.`);
       const payload: unknown = await response.json();
-      if (!isRecord(payload)) throw new Error('Provider trả dữ liệu không hợp lệ.');
-      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
-      const first = candidates[0];
-      if (!isRecord(first) || !isRecord(first.content) || !Array.isArray(first.content.parts)) {
+      if (!isRecord(payload) || !Array.isArray(payload.choices)) {
+        throw new Error('Provider trả dữ liệu không hợp lệ.');
+      }
+      const first = payload.choices[0];
+      if (!isRecord(first) || !isRecord(first.message)) {
         throw new Error('Provider không trả nội dung văn bản.');
       }
-      return first.content.parts.flatMap((part) =>
-        isRecord(part) && typeof part.text === 'string' ? [part.text] : [],
-      ).join('\n');
-    }
-
-    const content: Array<Record<string, unknown>> = [{ type: 'text', text: prompt }];
-    for (const image of images) {
-      content.push({
-        type: 'image_url',
-        image_url: { url: `data:${image.mimeType};base64,${image.base64Data}` },
-      });
-    }
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.modelId,
-        messages: [{ role: 'user', content: images.length ? content : prompt }],
-        temperature: 0.1,
-      }),
-      redirect: 'error',
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`Provider trả về lỗi HTTP ${response.status}.`);
-    const payload: unknown = await response.json();
-    if (!isRecord(payload) || !Array.isArray(payload.choices)) {
-      throw new Error('Provider trả dữ liệu không hợp lệ.');
-    }
-    const first = payload.choices[0];
-    if (!isRecord(first) || !isRecord(first.message)) {
+      const contentValue = first.message.content;
+      if (typeof contentValue === 'string') return contentValue;
+      if (Array.isArray(contentValue)) {
+        return contentValue.flatMap((part) =>
+          isRecord(part) && typeof part.text === 'string' ? [part.text] : [],
+        ).join('\n');
+      }
       throw new Error('Provider không trả nội dung văn bản.');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(`${modelId}: ${msg}`);
+      console.warn(`[AI Provider] ${modelId} failed (${msg}), trying next fallback model...`);
+    } finally {
+      clearTimeout(timeout);
     }
-    const contentValue = first.message.content;
-    if (typeof contentValue === 'string') return contentValue;
-    if (Array.isArray(contentValue)) {
-      return contentValue.flatMap((part) =>
-        isRecord(part) && typeof part.text === 'string' ? [part.text] : [],
-      ).join('\n');
-    }
-    throw new Error('Provider không trả nội dung văn bản.');
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw new Error(`Tất cả model của provider đều thất bại: ${errors.join('; ')}`);
 }
 
 export async function verifyProvider(protocol: AiProtocol, baseUrl: string, apiKey: string) {

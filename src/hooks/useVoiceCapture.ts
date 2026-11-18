@@ -30,10 +30,8 @@ type SpeechConstructor = new () => BrowserSpeechRecognition;
 export type MicPermissionState = 'unknown' | 'granted' | 'prompt' | 'denied';
 
 const MIC_GRANTED_STORAGE_KEY = 'chi-tieu:mic-granted-once';
+const SPEECH_UNAVAILABLE_SESSION_KEY = 'chi-tieu:speech-service-unavailable';
 
-// Remember within the tab session if the browser's Web Speech API cloud service
-// is blocked/unavailable (e.g. Arc, Brave, Electron, Firefox) so we go straight
-// to MediaRecorder + AI transcription without delay.
 let browserSpeechServiceUnavailable = false;
 
 const emptySubscribe = () => () => {};
@@ -41,6 +39,32 @@ const emptySubscribe = () => () => {};
 function isIosOrMobileBrowser() {
   if (typeof navigator === 'undefined') return false;
   return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
+function isSpeechServiceUnavailable(): boolean {
+  if (browserSpeechServiceUnavailable) return true;
+  if (typeof window === 'undefined') return true;
+  // On mobile/iOS browsers, running Web Speech API and MediaRecorder simultaneously
+  // causes OS hardware mic contention and silent dropouts. Use MediaRecorder + AI directly.
+  if (isIosOrMobileBrowser()) return true;
+  try {
+    if (window.sessionStorage.getItem(SPEECH_UNAVAILABLE_SESSION_KEY) === '1') {
+      browserSpeechServiceUnavailable = true;
+      return true;
+    }
+  } catch {
+    // Ignore storage access errors.
+  }
+  return false;
+}
+
+function markSpeechServiceUnavailable() {
+  browserSpeechServiceUnavailable = true;
+  try {
+    window.sessionStorage.setItem(SPEECH_UNAVAILABLE_SESSION_KEY, '1');
+  } catch {
+    // Ignore storage access errors.
+  }
 }
 
 function readMicGrantedStorage() {
@@ -84,6 +108,10 @@ function joinParts(...parts: string[]): string {
     .trim();
 }
 
+function hasAmountOrNumberCue(text: string): boolean {
+  return /\d|nghìn|ngàn|triệu|trăm|chục|mươi|mốt|tư|lăm|k\b|tr\b|đồng/iu.test(text);
+}
+
 function pickSupportedAudioMimeType(): string {
   if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
     return '';
@@ -120,18 +148,19 @@ export function useVoiceCapture(
   onEditTranscript?: (text: string) => void,
 ) {
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const recognitionEndedRef = useRef(true);
+  const recognitionWaitResolverRef = useRef<(() => void) | null>(null);
+  const speechRecognitionFailedRef = useRef(false);
+  const speechEndedEarlyRef = useRef(false);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const meterIntervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const chunksRef = useRef<BlobPart[]>([]);
   const recorderMimeRef = useRef<string>('audio/webm');
-  const usingRecorderFallbackRef = useRef(false);
-  const liveTranscribeInFlightRef = useRef(false);
-  const hasUnprocessedSpeechRef = useRef(false);
   const everDetectedSpeechRef = useRef(false);
   const lastSpeechAtRef = useRef(0);
-  const lastLiveTranscribeAtRef = useRef(0);
 
   const stopFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const speechDecayTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -176,17 +205,8 @@ export function useVoiceCapture(
     clearInterval(meterIntervalRef.current);
   }, []);
 
-  const stopMediaHardware = useCallback(() => {
+  const releaseAudioResources = useCallback(() => {
     clearInterval(meterIntervalRef.current);
-    const recorder = mediaRecorderRef.current;
-    mediaRecorderRef.current = null;
-    if (recorder && recorder.state !== 'inactive') {
-      try {
-        recorder.stop();
-      } catch {
-        // Ignore stop errors.
-      }
-    }
     const stream = mediaStreamRef.current;
     mediaStreamRef.current = null;
     stream?.getTracks().forEach((track) => track.stop());
@@ -198,12 +218,26 @@ export function useVoiceCapture(
     }
   }, []);
 
+  const stopMediaHardware = useCallback(() => {
+    clearInterval(meterIntervalRef.current);
+    const recorder = mediaRecorderRef.current;
+    mediaRecorderRef.current = null;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop();
+      } catch {
+        // Ignore stop errors.
+      }
+    }
+    releaseAudioResources();
+  }, [releaseAudioResources]);
+
   const triggerSpeechActivity = useCallback(() => {
     setSpeechActive(true);
     clearTimeout(speechDecayTimerRef.current);
     speechDecayTimerRef.current = setTimeout(() => {
       setSpeechActive(false);
-    }, 600);
+    }, 550);
   }, []);
 
   useEffect(() => {
@@ -247,7 +281,11 @@ export function useVoiceCapture(
     userStoppedRef.current = true;
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
-    recognition?.abort();
+    try {
+      recognition?.abort();
+    } catch {
+      // Ignore abort errors.
+    }
     stopMediaHardware();
   }, [clearTimers, stopMediaHardware]);
 
@@ -274,6 +312,11 @@ export function useVoiceCapture(
       recognition.onspeechstart = null;
       recognition.onspeechend = null;
       recognition.onsoundend = null;
+      try {
+        recognition.abort();
+      } catch {
+        // Ignore abort errors.
+      }
     }
 
     const fullText = (options.overrideText ?? joinParts(
@@ -286,7 +329,6 @@ export function useVoiceCapture(
     sessionFinalRef.current = '';
     sessionInterimRef.current = '';
     chunksRef.current = [];
-    usingRecorderFallbackRef.current = false;
     setListening(false);
     setTranscribing(false);
     setSpeechActive(false);
@@ -311,255 +353,23 @@ export function useVoiceCapture(
     }
   }, [clearTimers, stopMediaHardware]);
 
-  const startRecorderFallback = useCallback(async () => {
-    if (cancelledRef.current || userStoppedRef.current) return;
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      finishSession({
-        action: 'cancel',
-        status: 'Trình duyệt chưa hỗ trợ thu âm trực tiếp. Dùng mic trên bàn phím rồi bấm Gửi.',
-      });
-      focusComposerRef.current();
-      return;
-    }
-
-    usingRecorderFallbackRef.current = true;
-    chunksRef.current = [];
-    hasUnprocessedSpeechRef.current = false;
-    everDetectedSpeechRef.current = false;
-    liveTranscribeInFlightRef.current = false;
-    lastSpeechAtRef.current = 0;
-    lastLiveTranscribeAtRef.current = Date.now();
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
-      if (cancelledRef.current || userStoppedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-
-      markMicGrantedStorage();
-      setGrantedThisSession(true);
-      setPermissionState('granted');
-      setVoiceStatus('');
-      mediaStreamRef.current = stream;
-
-      const mimeType = pickSupportedAudioMimeType();
-      recorderMimeRef.current = mimeType || 'audio/webm';
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        const action = stopActionRef.current;
-        if (cancelledRef.current || action === 'cancel') {
-          finishSession({ action: 'cancel' });
-          return;
-        }
-
-        const blob = new Blob(chunksRef.current, { type: recorderMimeRef.current });
-        const existingText = joinParts(committedTextRef.current, sessionFinalRef.current);
-
-        if (blob.size < 800 && !existingText) {
-          finishSession({ action, overrideText: '' });
-          return;
-        }
-
-        if (!hasUnprocessedSpeechRef.current && existingText && !liveTranscribeInFlightRef.current) {
-          finishSession({ action, overrideText: existingText });
-          return;
-        }
-
-        setTranscribing(true);
-        setInterimTranscript('Đang nhận diện giọng nói…');
-        try {
-          const text = await requestAiAudioTranscription(blob);
-          finishSession({ action, overrideText: text || existingText });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : errorMessages.network;
-          if (existingText) {
-            finishSession({ action, overrideText: existingText });
-          } else {
-            finishSession({ action: 'cancel', status: message });
-          }
-        }
-      };
-
-      // Set up real-time Web Audio level meter for waveform ("rợn sóng") & VAD live transcription
-      const AudioCtx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (AudioCtx) {
-        const audioCtx = new AudioCtx();
-        void audioCtx.resume().catch(() => {});
-        audioContextRef.current = audioCtx;
-        const source = audioCtx.createMediaStreamSource(stream);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        const dataArray = new Uint8Array(analyser.fftSize);
-
-        meterIntervalRef.current = setInterval(() => {
-          if (cancelledRef.current || userStoppedRef.current) return;
-          analyser.getByteTimeDomainData(dataArray);
-          let sumSquares = 0;
-          for (let i = 0; i < dataArray.length; i += 1) {
-            const normalized = (dataArray[i] - 128) / 128;
-            sumSquares += normalized * normalized;
-          }
-          const rms = Math.sqrt(sumSquares / dataArray.length);
-          const now = Date.now();
-
-          if (rms > 0.014) {
-            setSpeechActive(true);
-            hasUnprocessedSpeechRef.current = true;
-            everDetectedSpeechRef.current = true;
-            lastSpeechAtRef.current = now;
-          } else if (now - lastSpeechAtRef.current > 280) {
-            setSpeechActive(false);
-          }
-
-          // Live preview transcription on natural pause (750ms after speaking) or every 3.5s of speech
-          const pausedAfterSpeech = hasUnprocessedSpeechRef.current && lastSpeechAtRef.current > 0 && now - lastSpeechAtRef.current >= 750;
-          const longContinuousSpeech = hasUnprocessedSpeechRef.current && now - lastLiveTranscribeAtRef.current >= 3600;
-
-          if (
-            (pausedAfterSpeech || longContinuousSpeech) &&
-            !liveTranscribeInFlightRef.current &&
-            chunksRef.current.length > 2
-          ) {
-            liveTranscribeInFlightRef.current = true;
-            hasUnprocessedSpeechRef.current = false;
-            lastLiveTranscribeAtRef.current = now;
-            const snapshotBlob = new Blob(chunksRef.current, { type: recorderMimeRef.current });
-            setInterimTranscript('Đang nhận diện…');
-            void requestAiAudioTranscription(snapshotBlob)
-              .then((text) => {
-                if (cancelledRef.current || finalizedRef.current) return;
-                if (text) {
-                  sessionFinalRef.current = text;
-                  sessionInterimRef.current = '';
-                  syncDisplayedTranscript();
-                } else {
-                  setInterimTranscript('');
-                }
-              })
-              .catch(() => {
-                if (!cancelledRef.current && !finalizedRef.current) {
-                  setInterimTranscript('');
-                }
-              })
-              .finally(() => {
-                liveTranscribeInFlightRef.current = false;
-              });
-          }
-        }, 60);
-      }
-
-      recorder.start(250);
-    } catch (error) {
-      const isDenied = error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError');
-      if (isDenied) setPermissionState('denied');
-      finishSession({
-        action: 'cancel',
-        status: isDenied ? getPermissionHelpMessage() : errorMessages['audio-capture'],
-      });
-      focusComposerRef.current();
-    }
-  }, [finishSession, syncDisplayedTranscript]);
-
-  const startVoice = useCallback(() => {
-    if (recognitionRef.current || mediaRecorderRef.current || listening) return;
-
-    if (typeof window !== 'undefined' && !window.isSecureContext) {
-      setVoiceStatus('Trang cần chạy qua HTTPS để trình duyệt cấp và lưu quyền mic.');
-      focusComposerRef.current();
-      return;
-    }
-
-    clearTimers();
-    userStoppedRef.current = false;
-    stopActionRef.current = 'submit';
-    cancelledRef.current = false;
-    finalizedRef.current = false;
-    committedTextRef.current = '';
-    sessionFinalRef.current = '';
-    sessionInterimRef.current = '';
-
-    setFinalTranscript('');
-    setInterimTranscript('');
-    setVoiceStatus('');
-    setSpeechActive(false);
-    setTranscribing(false);
-    setListening(true);
-
-    maxDurationTimerRef.current = setTimeout(() => {
-      if (userStoppedRef.current) return;
-      userStoppedRef.current = true;
-      stopActionRef.current = 'submit';
-      if (usingRecorderFallbackRef.current && mediaRecorderRef.current?.state === 'recording') {
-        stopMediaHardware();
-      } else if (recognitionRef.current) {
-        recognitionRef.current.stop();
-        stopFallbackTimerRef.current = setTimeout(() => {
-          finishSession({ action: 'submit' });
-        }, 400);
-      }
-    }, 90_000);
-
+  const startParallelSpeechPreview = useCallback(() => {
+    if (isSpeechServiceUnavailable()) return;
     const browser = window as Window & {
       SpeechRecognition?: SpeechConstructor;
       webkitSpeechRecognition?: SpeechConstructor;
     };
-    const Recognition = !browserSpeechServiceUnavailable
-      ? (browser.SpeechRecognition ?? browser.webkitSpeechRecognition)
-      : undefined;
+    const SpeechCtor = browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
+    if (!SpeechCtor) return;
 
-    if (!Recognition) {
-      void startRecorderFallback();
-      return;
-    }
-
-    function bootSpeechInstance(SpeechCtor: SpeechConstructor) {
+    try {
       const recognition = new SpeechCtor();
       recognition.lang = 'vi-VN';
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
       recognitionRef.current = recognition;
-
-      recognition.onstart = () => {
-        if (recognitionRef.current !== recognition) return;
-        markMicGrantedStorage();
-        setGrantedThisSession(true);
-        setPermissionState((current) => (current === 'unknown' || current === 'prompt' ? 'granted' : current));
-        setVoiceStatus('');
-      };
-
-      recognition.onaudiostart = () => {
-        if (recognitionRef.current === recognition) triggerSpeechActivity();
-      };
-      recognition.onsoundstart = () => {
-        if (recognitionRef.current === recognition) triggerSpeechActivity();
-      };
-      recognition.onspeechstart = () => {
-        if (recognitionRef.current === recognition) triggerSpeechActivity();
-      };
-      recognition.onspeechend = () => {
-        if (recognitionRef.current === recognition) setSpeechActive(false);
-      };
-      recognition.onsoundend = () => {
-        if (recognitionRef.current === recognition) setSpeechActive(false);
-      };
+      recognitionEndedRef.current = false;
 
       recognition.onresult = (event) => {
         if (recognitionRef.current !== recognition || cancelledRef.current) return;
@@ -578,122 +388,291 @@ export function useVoiceCapture(
         sessionFinalRef.current = joinParts(...finalParts);
         sessionInterimRef.current = joinParts(...interimParts);
         syncDisplayedTranscript();
+        everDetectedSpeechRef.current = true;
         triggerSpeechActivity();
       };
 
       recognition.onerror = (event) => {
         if (recognitionRef.current !== recognition || cancelledRef.current) return;
-
-        // Ignore 'no-speech' or 'aborted' while user hasn't stopped — onend will seamlessly restart
-        // so the mic NEVER turns off automatically while waiting for the user to speak!
-        if ((event.error === 'no-speech' || event.error === 'aborted') && !userStoppedRef.current) {
-          return;
-        }
-
-        // If browser's proprietary SpeechRecognition cloud service fails (e.g. Arc, Brave, Electron
-        // throwing 'network', 'service-not-allowed', or 'language-not-supported'), seamlessly switch
-        // to MediaRecorder + AI transcription while keeping the listening overlay open!
         if (
-          event.error === 'network' ||
-          event.error === 'service-not-allowed' ||
-          event.error === 'language-not-supported'
+          event.error === 'network'
+          || event.error === 'service-not-allowed'
+          || event.error === 'language-not-supported'
         ) {
-          browserSpeechServiceUnavailable = true;
-          recognition.onend = null;
-          recognition.onerror = null;
-          recognition.onresult = null;
-          recognitionRef.current = null;
-          try {
-            recognition.abort();
-          } catch {
-            // Ignore abort errors.
-          }
-          void startRecorderFallback();
-          return;
+          markSpeechServiceUnavailable();
         }
-
-        if (event.error === 'not-allowed') {
-          setPermissionState('denied');
+        if (event.error !== 'no-speech') {
+          speechRecognitionFailedRef.current = true;
         }
-
-        userStoppedRef.current = true;
-        finishSession({
-          action: 'cancel',
-          status: errorMessages[event.error] ?? 'Mic chưa sẵn sàng. Dùng mic trên bàn phím rồi bấm Gửi.',
-        });
-        focusComposerRef.current();
       };
 
       recognition.onend = () => {
-        if (recognitionRef.current !== recognition) return;
-
-        if (cancelledRef.current || stopActionRef.current === 'cancel') {
-          finishSession({ action: 'cancel' });
-          return;
+        recognitionEndedRef.current = true;
+        if (recognitionWaitResolverRef.current) {
+          recognitionWaitResolverRef.current();
+          recognitionWaitResolverRef.current = null;
         }
-
-        if (userStoppedRef.current) {
-          finishSession({ action: stopActionRef.current });
-          return;
-        }
-
-        // Commit current phrase and keep listening until the user explicitly stops!
-        committedTextRef.current = joinParts(
-          committedTextRef.current,
-          sessionFinalRef.current,
-          sessionInterimRef.current,
-        );
-        sessionFinalRef.current = '';
-        sessionInterimRef.current = '';
-        syncDisplayedTranscript();
-
-        try {
-          bootSpeechInstance(SpeechCtor);
-        } catch {
-          void startRecorderFallback();
+        if (recognitionRef.current !== recognition || cancelledRef.current) return;
+        if (!userStoppedRef.current) {
+          // SpeechRecognition stopped prematurely while user is still recording via MediaRecorder.
+          speechEndedEarlyRef.current = true;
+          committedTextRef.current = joinParts(
+            committedTextRef.current,
+            sessionFinalRef.current,
+            sessionInterimRef.current,
+          );
+          sessionFinalRef.current = '';
+          sessionInterimRef.current = '';
+          syncDisplayedTranscript();
         }
       };
 
       recognition.start();
+    } catch {
+      speechRecognitionFailedRef.current = true;
+      recognitionEndedRef.current = true;
+    }
+  }, [syncDisplayedTranscript, triggerSpeechActivity]);
+
+  const startVoice = useCallback(() => {
+    if (recognitionRef.current || mediaRecorderRef.current || listening) return;
+
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      setVoiceStatus('Trang cần chạy qua HTTPS để trình duyệt cấp và lưu quyền mic.');
+      focusComposerRef.current();
+      return;
     }
 
-    try {
-      bootSpeechInstance(Recognition);
-    } catch {
-      void startRecorderFallback();
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setVoiceStatus('Trình duyệt chưa hỗ trợ thu âm trực tiếp. Dùng mic trên bàn phím rồi bấm Gửi.');
+      focusComposerRef.current();
+      return;
     }
-  }, [clearTimers, finishSession, listening, startRecorderFallback, stopMediaHardware, syncDisplayedTranscript, triggerSpeechActivity]);
+
+    clearTimers();
+    userStoppedRef.current = false;
+    stopActionRef.current = 'submit';
+    cancelledRef.current = false;
+    finalizedRef.current = false;
+    speechRecognitionFailedRef.current = false;
+    speechEndedEarlyRef.current = false;
+    recognitionEndedRef.current = true;
+    recognitionWaitResolverRef.current = null;
+    committedTextRef.current = '';
+    sessionFinalRef.current = '';
+    sessionInterimRef.current = '';
+    chunksRef.current = [];
+    everDetectedSpeechRef.current = false;
+    lastSpeechAtRef.current = 0;
+
+    setFinalTranscript('');
+    setInterimTranscript('');
+    setVoiceStatus('');
+    setSpeechActive(false);
+    setTranscribing(false);
+    setListening(true);
+
+    // Unlock AudioContext synchronously inside user click gesture (critical for iOS Safari / WebKit).
+    const AudioCtx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (AudioCtx) {
+      try {
+        const audioCtx = new AudioCtx();
+        void audioCtx.resume().catch(() => {});
+        audioContextRef.current = audioCtx;
+      } catch {
+        // Ignore AudioContext creation failure.
+      }
+    }
+
+    maxDurationTimerRef.current = setTimeout(() => {
+      if (userStoppedRef.current) return;
+      userStoppedRef.current = true;
+      stopActionRef.current = 'submit';
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch {
+          finishSession({ action: 'submit' });
+        }
+      } else {
+        finishSession({ action: 'submit' });
+      }
+    }, 90_000);
+
+    void (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        if (cancelledRef.current || userStoppedRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        markMicGrantedStorage();
+        setGrantedThisSession(true);
+        setPermissionState('granted');
+        setVoiceStatus('');
+        mediaStreamRef.current = stream;
+
+        const mimeType = pickSupportedAudioMimeType();
+        recorderMimeRef.current = mimeType || 'audio/webm';
+        const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        mediaRecorderRef.current = recorder;
+
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            chunksRef.current.push(event.data);
+          }
+        };
+
+        recorder.onstop = async () => {
+          clearTimeout(stopFallbackTimerRef.current);
+          releaseAudioResources();
+
+          const action = stopActionRef.current;
+          if (cancelledRef.current || action === 'cancel') {
+            finishSession({ action: 'cancel' });
+            return;
+          }
+
+          // If desktop SpeechRecognition was running, allow up to 300ms for its final onresult event.
+          if (recognitionRef.current && !recognitionEndedRef.current) {
+            await new Promise<void>((resolve) => {
+              recognitionWaitResolverRef.current = resolve;
+              setTimeout(resolve, 300);
+            });
+          }
+
+          const blob = new Blob(chunksRef.current, { type: recorderMimeRef.current });
+          const speechText = joinParts(
+            committedTextRef.current,
+            sessionFinalRef.current,
+            sessionInterimRef.current,
+          );
+
+          // Fast path: if desktop SpeechRecognition ran cleanly without stopping early or failing,
+          // and captured a phrase that includes an amount/number, submit immediately!
+          const canTrustSpeechText =
+            Boolean(speechText)
+            && !speechRecognitionFailedRef.current
+            && !speechEndedEarlyRef.current
+            && hasAmountOrNumberCue(speechText);
+
+          if (canTrustSpeechText) {
+            finishSession({ action, overrideText: speechText });
+            return;
+          }
+
+          if (blob.size < 600) {
+            finishSession({ action, overrideText: speechText });
+            return;
+          }
+
+          setTranscribing(true);
+          setInterimTranscript('Đang nhận diện giọng nói…');
+          try {
+            const aiText = await requestAiAudioTranscription(blob);
+            finishSession({ action, overrideText: aiText || speechText });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : errorMessages.network;
+            if (speechText) {
+              finishSession({ action, overrideText: speechText });
+            } else {
+              finishSession({ action: 'cancel', status: message });
+            }
+          }
+        };
+
+        // Connect live microphone stream to Web Audio analyser for responsive waveform animation
+        const audioCtx = audioContextRef.current;
+        if (audioCtx) {
+          try {
+            if (audioCtx.state === 'suspended') {
+              void audioCtx.resume().catch(() => {});
+            }
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            const dataArray = new Uint8Array(analyser.fftSize);
+
+            meterIntervalRef.current = setInterval(() => {
+              if (cancelledRef.current || userStoppedRef.current) return;
+              analyser.getByteTimeDomainData(dataArray);
+              let sumSquares = 0;
+              for (let i = 0; i < dataArray.length; i += 1) {
+                const normalized = (dataArray[i] - 128) / 128;
+                sumSquares += normalized * normalized;
+              }
+              const rms = Math.sqrt(sumSquares / dataArray.length);
+              const now = Date.now();
+
+              if (rms > 0.009) {
+                setSpeechActive(true);
+                everDetectedSpeechRef.current = true;
+                lastSpeechAtRef.current = now;
+              } else if (now - lastSpeechAtRef.current > 260) {
+                setSpeechActive(false);
+              }
+            }, 60);
+          } catch {
+            // Ignore analyser setup failure.
+          }
+        }
+
+        recorder.start(200);
+        startParallelSpeechPreview();
+      } catch (error) {
+        const isDenied = error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError');
+        if (isDenied) setPermissionState('denied');
+        finishSession({
+          action: 'cancel',
+          status: isDenied ? getPermissionHelpMessage() : errorMessages['audio-capture'],
+        });
+        focusComposerRef.current();
+      }
+    })();
+  }, [clearTimers, finishSession, listening, releaseAudioResources, startParallelSpeechPreview]);
 
   const stopWithAction = useCallback((action: 'submit' | 'edit') => {
     if (!listening || transcribing) return;
     userStoppedRef.current = true;
     stopActionRef.current = action;
-
-    if (usingRecorderFallbackRef.current) {
-      const recorder = mediaRecorderRef.current;
-      if (recorder && recorder.state !== 'inactive') {
-        stopMediaHardware();
-        return;
-      }
-      finishSession({ action });
-      return;
-    }
+    clearInterval(meterIntervalRef.current);
 
     const recognition = recognitionRef.current;
-    if (!recognition) {
-      finishSession({ action });
-      return;
+    if (recognition && !recognitionEndedRef.current) {
+      try {
+        recognition.stop();
+      } catch {
+        recognitionEndedRef.current = true;
+      }
     }
-    try {
-      recognition.stop();
-    } catch {
-      finishSession({ action });
-      return;
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        // Request final buffered data and stop recorder; stream tracks are released inside recorder.onstop
+        // so the last words spoken right before clicking Stop are never cut off!
+        recorder.stop();
+        stopFallbackTimerRef.current = setTimeout(() => {
+          finishSession({ action });
+        }, 1500);
+        return;
+      } catch {
+        // Fall through to finishSession if recorder.stop() throws.
+      }
     }
-    stopFallbackTimerRef.current = setTimeout(() => {
-      finishSession({ action });
-    }, 350);
-  }, [finishSession, listening, stopMediaHardware, transcribing]);
+
+    finishSession({ action });
+  }, [finishSession, listening, transcribing]);
 
   const stopAndSubmitVoice = useCallback(() => {
     stopWithAction('submit');

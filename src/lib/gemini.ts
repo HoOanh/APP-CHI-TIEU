@@ -1,20 +1,21 @@
 import { findChatTransactionDate } from './chat-transaction-text';
-import { GoogleGenAI, type Part } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, type Part } from '@google/genai';
 import { getDb } from './db';
 import { decryptSecret } from './secrets';
 import { callConfiguredAi, type AiInputImage } from './ai-provider';
 import { getVietnamToday } from './utils';
 
-// Stable, production Gemini Developer API models. Keep the model IDs explicit
-// instead of relying on preview aliases that can disappear without notice.
-const MODEL_PRIORITY = [
-  'gemini-3.5-flash-lite',
-  'gemini-3.6-flash',
-  'gemini-2.5-flash',
+export const DEFAULT_GEMINI_MODELS = [
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite' },
+  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
 ] as const;
 
-const TRANSIENT_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-const MAX_ATTEMPTS_PER_MODEL = 2;
+// Default fallback chain when no custom model is configured:
+// Gemini 3.5 Flash Lite -> Gemini 3.1 Flash Lite -> Gemini 2.5 Flash Lite
+const MODEL_PRIORITY = DEFAULT_GEMINI_MODELS.map((model) => model.id);
+
+const MODEL_TIMEOUT_MS = 12_000;
 
 async function getApiKeys(userId?: number): Promise<string[]> {
   const keys: string[] = [];
@@ -60,8 +61,12 @@ function getErrorDetails(error: unknown): { status: number; message: string } {
   return { status: 0, message: String(error) };
 }
 
-function retryDelayMs(attempt: number): number {
-  return 250 * 2 ** (attempt - 1) + Math.floor(Math.random() * 100);
+function isInvalidApiKeyError(status: number, message: string): boolean {
+  return (
+    status === 401
+    || status === 403
+    || /API_KEY_INVALID|API key not valid|PERMISSION_DENIED/i.test(message)
+  );
 }
 
 async function callGeminiWithFallback(
@@ -78,8 +83,12 @@ async function callGeminiWithFallback(
         ? [{ base64Data, mimeType }]
         : [];
     });
-    const configuredResponse = await callConfiguredAi(userId, prompt, images);
-    if (configuredResponse !== null) return configuredResponse;
+    try {
+      const configuredResponse = await callConfiguredAi(userId, prompt, images);
+      if (configuredResponse !== null) return configuredResponse;
+    } catch (error: unknown) {
+      console.warn('[Gemini] Configured provider failed, falling back to default Gemini chain:', error);
+    }
   }
 
   const apiKeys = await getApiKeys(userId);
@@ -90,46 +99,32 @@ async function callGeminiWithFallback(
     const genAI = new GoogleGenAI({ apiKey });
 
     for (const modelName of MODEL_PRIORITY) {
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt++) {
-        try {
-          const response = await genAI.models.generateContent({
-            model: modelName,
-            contents: parts,
-          });
-          if (response.text) return response.text;
+      try {
+        const response = await genAI.models.generateContent({
+          model: modelName,
+          contents: parts,
+          config: {
+            temperature: 0.1,
+            httpOptions: { timeout: MODEL_TIMEOUT_MS },
+            thinkingConfig: modelName.startsWith('gemini-3')
+              ? { thinkingLevel: ThinkingLevel.MINIMAL }
+              : { thinkingBudget: 0 },
+          },
+        });
+        if (response.text) return response.text;
 
-          throw new Error('Gemini không trả về nội dung văn bản.');
-        } catch (error: unknown) {
-          const { status, message } = getErrorDetails(error);
-          const errorSummary = `${modelName}@key${keyIdx + 1}: ${status || 'unknown'} ${message.slice(0, 100)}`;
+        throw new Error('Gemini không trả về nội dung văn bản.');
+      } catch (error: unknown) {
+        const { status, message } = getErrorDetails(error);
+        const errorSummary = `${modelName}@key${keyIdx + 1}: ${status || 'unknown'} ${message.slice(0, 100)}`;
+        errors.push(errorSummary);
 
-          if (TRANSIENT_STATUS_CODES.has(status)) {
-            errors.push(errorSummary);
-            if (attempt < MAX_ATTEMPTS_PER_MODEL) {
-              console.warn(
-                `[Gemini] ${errorSummary}; retrying (${attempt + 1}/${MAX_ATTEMPTS_PER_MODEL})...`,
-              );
-              await new Promise<void>((resolve) => {
-                setTimeout(resolve, retryDelayMs(attempt));
-              });
-              continue;
-            }
-
-            console.warn(`[Gemini] ${errorSummary}; trying next model...`);
-            break;
-          }
-
-          if (status === 404) {
-            console.warn(`[Gemini] ${errorSummary}; trying next model...`);
-            errors.push(errorSummary);
-            break;
-          }
-
-          // Invalid credentials or malformed requests are not model-specific.
-          console.error(`[Gemini] ${errorSummary}`);
-          errors.push(errorSummary);
+        if (isInvalidApiKeyError(status, message)) {
+          console.error(`[Gemini] Invalid/unauthorized key (${errorSummary}); trying next API key...`);
           continue keyLoop;
         }
+
+        console.warn(`[Gemini] ${errorSummary}; falling back to next model...`);
       }
     }
   }

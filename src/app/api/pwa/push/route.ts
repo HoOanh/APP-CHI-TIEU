@@ -7,18 +7,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const endpoint = request.headers.get('x-push-endpoint');
   const db = await getDb();
   const result = await db.execute({
-    sql: 'SELECT COUNT(*) AS count FROM pwa_push_subscriptions WHERE user_id = ?',
-    args: [user.id],
+    sql: `SELECT 1 FROM pwa_push_subscriptions
+          WHERE user_id = ? AND (? IS NULL OR endpoint = ?) LIMIT 1`,
+    args: [user.id, endpoint, endpoint],
   });
+  const publicKey = getWebPushPublicKey();
   return NextResponse.json({
-    configured: Boolean(getWebPushPublicKey()),
-    publicKey: getWebPushPublicKey(),
-    subscribed: Number(result.rows[0]?.count || 0) > 0,
+    configured: Boolean(publicKey),
+    publicKey,
+    subscribed: result.rows.length > 0,
   }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 
