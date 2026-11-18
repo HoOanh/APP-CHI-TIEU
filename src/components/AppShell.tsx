@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -75,8 +75,9 @@ export function AppShell({ children, user }: AppShellProps) {
   useEffect(() => {
     if (!user || isPublicRoute || hasCheckedBudgetAlerts.current) return;
     hasCheckedBudgetAlerts.current = true;
+    if (pathname === '/') return;
 
-    const notifyBudgetStatus = async () => {
+    const timer = window.setTimeout(async () => {
       const response = await fetch(`/api/dashboard/budget-alerts?month=${getCurrentMonth()}`);
       if (!response.ok) return;
       const alerts: BudgetAlertResponse[] = await response.json();
@@ -100,10 +101,10 @@ export function AppShell({ children, user }: AppShellProps) {
           );
         }
       });
-    };
+    }, 1500);
 
-    void notifyBudgetStatus();
-  }, [isPublicRoute, showToast, user]);
+    return () => window.clearTimeout(timer);
+  }, [isPublicRoute, pathname, showToast, user]);
 
   useEffect(() => {
     if (!user || isPublicRoute) return;
@@ -192,64 +193,6 @@ export function AppShell({ children, user }: AppShellProps) {
         <main className={cn('app-content mx-auto min-h-dvh w-full', !isChatRoute && 'max-w-[1440px]')}>{children}</main>
       </div>
       <BottomNav user={user} />
-      <AppBootLoader />
-    </div>
-  );
-}
-
-function AppBootLoader() {
-  const [visible, setVisible] = useState(true);
-  const [fading, setFading] = useState(false);
-
-  useEffect(() => {
-    const fadeTimer = window.setTimeout(() => {
-      setFading(true);
-    }, 180);
-    const hideTimer = window.setTimeout(() => {
-      setVisible(false);
-    }, 480);
-
-    return () => {
-      window.clearTimeout(fadeTimer);
-      window.clearTimeout(hideTimer);
-    };
-  }, []);
-
-  if (!visible) return null;
-
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      aria-label="Đang khởi tạo ứng dụng"
-      className={cn(
-        'fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#f1f5f9] px-6 text-center transition-opacity duration-300',
-        fading && 'pointer-events-none opacity-0',
-      )}
-    >
-      <div className="relative flex size-24 items-center justify-center rounded-[28px] border border-emerald-100 bg-white shadow-[0_22px_50px_-20px_rgba(0,188,124,0.45)]">
-        <span
-          aria-hidden
-          className="voice-ripple-ring absolute inset-1 rounded-[26px] border-2 border-[#00bc7c]/30"
-        />
-        <Image
-          src="/arc-irobot.png"
-          alt="ARC Irobot"
-          width={68}
-          height={52}
-          priority
-          className="h-auto w-15 object-contain"
-        />
-      </div>
-      <p className="mt-5 text-base font-semibold tracking-tight text-slate-800">
-        ARC Irobot · Sổ chi tiêu
-      </p>
-      <p className="mt-1 text-xs text-slate-500">
-        Đang tải dữ liệu tài chính…
-      </p>
-      <div className="mt-4 h-1.5 w-44 overflow-hidden rounded-full bg-emerald-100">
-        <div className="h-full w-2/3 animate-pulse rounded-full bg-[#00bc7c]" />
-      </div>
     </div>
   );
 }

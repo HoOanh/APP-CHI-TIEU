@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { cache } from 'react';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 
@@ -90,7 +91,7 @@ function getCachedDevelopmentUser() {
   return developmentUserPromise;
 }
 
-export async function getCurrentUser(): Promise<CurrentUser | null> {
+export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const session = await auth();
   if (session?.user?.id && session.user.email) {
     return {
@@ -107,4 +108,4 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   }
 
   return null;
-}
+});

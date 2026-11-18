@@ -5,7 +5,7 @@ import { LoaderCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/useToast';
 
-interface Insight {
+export interface Insight {
   id: number;
   period_start: string;
   period_end: string;
@@ -13,21 +13,35 @@ interface Insight {
   created_at: string;
 }
 
-export function WeeklyInsightCard() {
-  const [insight, setInsight] = useState<Insight | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+interface WeeklyInsightCardProps {
+  initialInsight?: Insight | null;
+  isDashboardLoading?: boolean;
+}
+
+export function WeeklyInsightCard({
+  initialInsight,
+  isDashboardLoading,
+}: WeeklyInsightCardProps = {}) {
+  const isControlledByDashboard = isDashboardLoading !== undefined;
+  const [fetchedInsight, setFetchedInsight] = useState<Insight | null>(null);
+  const [generatedInsight, setGeneratedInsight] = useState<Insight | null>(null);
+  const [isFetching, setIsFetching] = useState(!isControlledByDashboard);
   const [isGenerating, setIsGenerating] = useState(false);
   const { showToast } = useToast();
 
   useEffect(() => {
+    if (isControlledByDashboard) return;
     let cancelled = false;
     fetch('/api/insights/latest')
       .then(async (response) => response.ok ? await response.json() as Insight | null : null)
-      .then((result) => { if (!cancelled) setInsight(result); })
-      .catch(() => { if (!cancelled) setInsight(null); })
-      .finally(() => { if (!cancelled) setIsLoading(false); });
+      .then((result) => { if (!cancelled) setFetchedInsight(result); })
+      .catch(() => { if (!cancelled) setFetchedInsight(null); })
+      .finally(() => { if (!cancelled) setIsFetching(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [isControlledByDashboard]);
+
+  const insight = generatedInsight ?? (isControlledByDashboard ? (initialInsight ?? null) : fetchedInsight);
+  const isLoading = isControlledByDashboard ? Boolean(isDashboardLoading) && !generatedInsight : isFetching;
 
   async function generateInsight() {
     setIsGenerating(true);
@@ -37,7 +51,7 @@ export function WeeklyInsightCard() {
       if (!response.ok || !('content' in result)) {
         throw new Error('error' in result ? result.error : 'Không thể tạo phân tích.');
       }
-      setInsight(result);
+      setGeneratedInsight(result);
       showToast('Đã cập nhật phân tích tuần', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Không thể tạo phân tích.', 'error');

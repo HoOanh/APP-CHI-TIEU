@@ -1,8 +1,10 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { QuickEntryAccess } from '@/components/QuickEntryAccess';
+import { useToast } from '@/hooks/useToast';
 import {
   AlertTriangle,
   ChevronRight,
@@ -14,7 +16,7 @@ import {
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
-import { WeeklyInsightCard } from '@/components/WeeklyInsightCard';
+import { WeeklyInsightCard, type Insight } from '@/components/WeeklyInsightCard';
 import {
   cn,
   formatCurrency,
@@ -61,6 +63,7 @@ interface DashboardResponse {
   recent: Transaction[];
   attentionBudgets: Budget[];
   categorySpending: CategorySpending[];
+  latestInsight?: Insight | null;
 }
 
 interface CategorySpending {
@@ -78,6 +81,8 @@ const fetchDashboard = async (url: string): Promise<DashboardResponse> => {
 
 export default function DashboardPage() {
   const month = getCurrentMonth();
+  const hasNotifiedAlerts = useRef(false);
+  const { showToast } = useToast();
   const { data, error, mutate } = useSWR(`/api/dashboard?month=${month}`, fetchDashboard, {
     dedupingInterval: 10_000,
     revalidateOnFocus: true,
@@ -87,6 +92,31 @@ export default function DashboardPage() {
   const attentionBudgets = data?.attentionBudgets ?? null;
   const categorySpending = data?.categorySpending ?? null;
   const categoryTotal = categorySpending?.reduce((total, item) => total + Number(item.spent_amount), 0) ?? 0;
+
+  useEffect(() => {
+    if (!attentionBudgets || hasNotifiedAlerts.current) return;
+    hasNotifiedAlerts.current = true;
+    attentionBudgets.forEach((alert) => {
+      const spent = Number(alert.spent_amount) || 0;
+      const limit = Number(alert.budget_amount) || 0;
+      const todaySpent = Number(alert.today_spent) || 0;
+      const dailyLimit = Number(alert.daily_limit) || 0;
+
+      if (limit > 0 && spent >= limit) {
+        showToast(
+          `🚨 THỦNG NGÂN SÁCH THÁNG — ${alert.category_name}`,
+          'error',
+          `Đã chi ${formatCurrency(spent)}/${formatCurrency(limit)}${spent > limit ? `, lố ${formatCurrency(spent - limit)}` : ''}. Bớt vung tay ngay đại ca!`,
+        );
+      } else if (dailyLimit > 0 && todaySpent > dailyLimit) {
+        showToast(
+          `🚨 CHI LỐ HẠN MỨC NGÀY — ${alert.category_name}`,
+          'error',
+          `Hôm nay đã chi ${formatCurrency(todaySpent)}/${formatCurrency(dailyLimit)} (vượt lố ${formatCurrency(todaySpent - dailyLimit)}). Dừng chi hũ này hôm nay nhé!`,
+        );
+      }
+    });
+  }, [attentionBudgets, showToast]);
 
   return (
     <div className="mx-auto min-h-screen w-full max-w-[1400px] overflow-x-hidden px-4 pb-nav pt-5 md:px-8 md:py-8 xl:px-10">
@@ -205,7 +235,10 @@ export default function DashboardPage() {
       </section>
 
       <aside className="min-w-0 space-y-6 xl:col-span-5">
-      <WeeklyInsightCard />
+      <WeeklyInsightCard
+        initialInsight={data?.latestInsight ?? null}
+        isDashboardLoading={!data && !error}
+      />
       <section className="min-w-0">
         <SectionTitle title="Chi theo danh mục" href="/stats" mobileHref="/settings#thong-ke" />
         <div className="rounded-2xl border border-slate-200 bg-white p-4">

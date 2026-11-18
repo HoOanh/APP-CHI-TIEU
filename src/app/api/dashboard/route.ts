@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     const db = await getDb();
     const databaseReadyAt = performance.now();
     const today = getVietnamToday();
-    const [summaryResult, recentResult, alertsResult, categoryResult] = await db.batch([
+    const [summaryResult, recentResult, alertsResult, categoryResult, insightResult] = await db.batch([
       {
         sql: `SELECT
                 COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) AS wallet_balance,
@@ -66,6 +66,12 @@ export async function GET(request: NextRequest) {
               ORDER BY spent_amount DESC
               LIMIT 4`,
         args: [user.id, start, end],
+      },
+      {
+        sql: `SELECT id, period_start, period_end, content, created_at FROM ai_insights
+              WHERE user_id = ? AND period = 'week'
+              ORDER BY period_end DESC, created_at DESC LIMIT 1`,
+        args: [user.id],
       },
     ]);
 
@@ -140,6 +146,17 @@ export async function GET(request: NextRequest) {
       .sort((left, right) => (left.alert_severity === right.alert_severity ? Number(right.spent_amount) - Number(left.spent_amount) : left.alert_severity === 'danger' ? -1 : 1))
       .slice(0, 6);
 
+    const insightRow = insightResult.rows[0];
+    const latestInsight = insightRow
+      ? {
+          id: Number(insightRow.id),
+          period_start: String(insightRow.period_start),
+          period_end: String(insightRow.period_end),
+          content: String(insightRow.content),
+          created_at: String(insightRow.created_at),
+        }
+      : null;
+
     return NextResponse.json({
       summary: {
         walletBalance: Number(row?.wallet_balance) || 0,
@@ -151,6 +168,7 @@ export async function GET(request: NextRequest) {
       recent: recentResult.rows,
       attentionBudgets,
       categorySpending: categoryResult.rows,
+      latestInsight,
     }, {
       headers: {
         'Cache-Control': 'private, no-store',

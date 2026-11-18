@@ -27,12 +27,12 @@ import { MonthPicker } from '@/components/MonthPicker';
 import { useToast } from '@/hooks/useToast';
 import { formatCurrency, getCurrentMonth, getPercentage } from '@/lib/utils';
 import { CategoryIcon } from '@/components/CategoryIcon';
-import { AiProvidersSettings } from '@/components/AiProvidersSettings';
-import { PwaReminderSettings } from '@/components/PwaReminderSettings';
 import Link from 'next/link';
 import { clearPwaCache } from '@/lib/pwa-cache';
 
 const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
+const AiProvidersSettings = dynamic(() => import('@/components/AiProvidersSettings').then((module) => module.AiProvidersSettings), { loading: () => <div className="h-36 animate-pulse rounded-2xl bg-slate-200/70" /> });
+const PwaReminderSettings = dynamic(() => import('@/components/PwaReminderSettings').then((module) => module.PwaReminderSettings), { loading: () => <div className="h-36 animate-pulse rounded-2xl bg-slate-200/70" /> });
 
 const CATEGORY_COLORS = ['#00B878', '#40C3F9', '#FFB020', '#F65B8D', '#8B5CF6', '#64748B'];
 

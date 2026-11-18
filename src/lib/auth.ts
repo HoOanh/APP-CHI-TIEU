@@ -59,18 +59,33 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   pages: { signIn: '/login' },
   callbacks: {
     async jwt({ token, user }) {
-      if (!user) return token;
-      if (!user.email) return null;
-      const { getDb } = await import('@/lib/db');
-      const db = await getDb();
-      const result = await db.execute({
-        sql: `INSERT INTO users (email, name, avatar) VALUES (?, ?, ?)
-              ON CONFLICT(email) DO UPDATE SET name = excluded.name, avatar = excluded.avatar,
-                updated_at = datetime('now')
-              RETURNING id`,
-        args: [user.email, user.name || '', user.image || ''],
-      });
-      token.accountId = String(result.rows[0].id);
+      if (user) {
+        if (!user.email) return null;
+        const { getDb } = await import('@/lib/db');
+        const db = await getDb();
+        const result = await db.execute({
+          sql: `INSERT INTO users (email, name, avatar) VALUES (?, ?, ?)
+                ON CONFLICT(email) DO UPDATE SET name = excluded.name, avatar = excluded.avatar,
+                  updated_at = datetime('now')
+                RETURNING id`,
+          args: [user.email, user.name || '', user.image || ''],
+        });
+        token.accountId = String(result.rows[0].id);
+        return token;
+      }
+      if (typeof token.accountId !== 'string' && typeof token.email === 'string') {
+        try {
+          const { getDb } = await import('@/lib/db');
+          const db = await getDb();
+          const result = await db.execute({
+            sql: 'SELECT id FROM users WHERE email = ?',
+            args: [token.email],
+          });
+          if (result.rows[0]) token.accountId = String(result.rows[0].id);
+        } catch (error) {
+          console.error('Failed to hydrate legacy JWT user:', error);
+        }
+      }
       return token;
     },
     async session({ session, token }) {

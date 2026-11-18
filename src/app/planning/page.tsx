@@ -1,8 +1,15 @@
 'use client';
 
-import BudgetsPage from '@/app/budgets/page';
-import DebtsPage from '@/app/debts/page';
+import dynamic from 'next/dynamic';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+const BudgetsPage = dynamic(() => import('@/app/budgets/page'), {
+  loading: () => <div className="space-y-4 p-4"><Skeleton className="h-28 w-full rounded-2xl" /><Skeleton className="h-44 w-full rounded-2xl" /></div>,
+});
+const DebtsPage = dynamic(() => import('@/app/debts/page'), {
+  loading: () => <div className="space-y-4 p-4"><Skeleton className="h-28 w-full rounded-2xl" /><Skeleton className="h-44 w-full rounded-2xl" /></div>,
+});
 
 export default function PlanningPage() {
   return (

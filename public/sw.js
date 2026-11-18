@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'arc-irobot-';
-const STATIC_CACHE = `${CACHE_PREFIX}static-v3`;
+const STATIC_CACHE = `${CACHE_PREFIX}static-v4`;
 const OFFLINE_URL = '/offline.html';
 const APP_ASSETS = [
   OFFLINE_URL,
@@ -28,16 +28,20 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((cacheNames) =>
-        Promise.all(
-          cacheNames
-            .filter((name) => name.startsWith(CACHE_PREFIX) && name !== STATIC_CACHE)
-            .map((name) => caches.delete(name)),
+    Promise.all([
+      caches
+        .keys()
+        .then((cacheNames) =>
+          Promise.all(
+            cacheNames
+              .filter((name) => name.startsWith(CACHE_PREFIX) && name !== STATIC_CACHE)
+              .map((name) => caches.delete(name)),
+          ),
         ),
-      )
-      .then(() => self.clients.claim()),
+      self.registration.navigationPreload
+        ? self.registration.navigationPreload.enable().catch(() => undefined)
+        : Promise.resolve(),
+    ]).then(() => self.clients.claim()),
   );
 });
 
@@ -53,11 +57,17 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(async () => {
-        const cache = await caches.open(STATIC_CACHE);
-        const offlinePage = await cache.match(OFFLINE_URL);
-        return offlinePage || Response.error();
-      }),
+      (async () => {
+        try {
+          const preloadResponse = await event.preloadResponse;
+          if (preloadResponse) return preloadResponse;
+          return await fetch(request);
+        } catch {
+          const cache = await caches.open(STATIC_CACHE);
+          const offlinePage = await cache.match(OFFLINE_URL);
+          return offlinePage || Response.error();
+        }
+      })(),
     );
     return;
   }

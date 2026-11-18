@@ -61,4 +61,8 @@ test('isolates budgets and transactions by user', async (context) => {
   assert.equal(secondBudgets.rows.length, 1);
   assert.equal(Number(secondBudgets.rows[0].budget_amount), 2_000_000);
   assert.equal(secondExpenses.rows.length, 0);
+
+  const schemaVersion = await db.execute("SELECT value FROM settings WHERE key = 'schema_version'");
+  assert.equal(schemaVersion.rows.length, 1);
+  await initializeDatabase(db);
 });

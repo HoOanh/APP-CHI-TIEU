@@ -1,8 +1,21 @@
 import type { Client } from '@libsql/client';
 
 export const UNCLASSIFIED_EXPENSE = 'Chưa phân loại';
+const SCHEMA_VERSION = '2026-11-18-v1';
 
 export async function initializeDatabase(db: Client) {
+  try {
+    const versionResult = await db.execute({
+      sql: "SELECT value FROM settings WHERE key = 'schema_version' LIMIT 1",
+      args: [],
+    });
+    if (versionResult.rows[0]?.value === SCHEMA_VERSION) {
+      return;
+    }
+  } catch {
+    // Table `settings` does not exist yet on a fresh DB — run full initialization.
+  }
+
   await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,6 +257,12 @@ export async function initializeDatabase(db: Client) {
             AND name IN ('Di chuyển', 'Mua sắm', 'Giải trí', 'Hóa đơn', 'Sức khỏe', 'Giáo dục', 'Tiết kiệm', 'Khác')
             AND NOT EXISTS (SELECT 1 FROM expenses WHERE expenses.category_id = categories.id)
             AND NOT EXISTS (SELECT 1 FROM budget_jars WHERE budget_jars.category_id = categories.id)`,
+  });
+
+  await db.execute({
+    sql: `INSERT INTO settings (key, value) VALUES ('schema_version', ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    args: [SCHEMA_VERSION],
   });
 }
 
