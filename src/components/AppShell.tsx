@@ -23,6 +23,8 @@ import { useToast } from '@/hooks/useToast';
 import { syncOfflineTransactions } from '@/lib/offline-queue';
 import { cn } from '@/lib/utils';
 import { LinkPending } from '@/components/LinkPending';
+import { LedgerSwitcher } from '@/components/LedgerSwitcher';
+import type { LedgerKind, LedgerRole } from '@/lib/ledger-access';
 import type { EnabledModules } from '@/lib/modules';
 
 interface AppShellUser {
@@ -32,6 +34,10 @@ interface AppShellUser {
   isDevelopmentUser: boolean;
   onboardedAt?: string | null;
   modules?: EnabledModules;
+  activeLedgerId?: number;
+  activeLedgerName?: string;
+  activeLedgerKind?: LedgerKind;
+  activeLedgerRole?: LedgerRole;
 }
 
 interface AppShellProps {
@@ -63,14 +69,15 @@ export function AppShell({ children, user }: AppShellProps) {
   const router = useRouter();
   const { showToast } = useToast();
   const isPublicRoute = pathname.startsWith('/login') || pathname.startsWith('/reset-password');
+  const isInviteRoute = pathname.startsWith('/ledgers/invite');
   const isOnboardingRoute = pathname.startsWith('/onboarding');
   const isChatRoute = pathname === '/chat' || pathname === '/debt-chat';
 
   useEffect(() => {
-    if (user && !user.isDevelopmentUser && !user.onboardedAt && !isPublicRoute && !isOnboardingRoute) {
+    if (user && !user.isDevelopmentUser && !user.onboardedAt && !isPublicRoute && !isOnboardingRoute && !isInviteRoute) {
       router.replace('/onboarding');
     }
-  }, [isOnboardingRoute, isPublicRoute, router, user]);
+  }, [isInviteRoute, isOnboardingRoute, isPublicRoute, router, user]);
 
   useEffect(() => {
     if (!user || isPublicRoute) return;
@@ -112,9 +119,11 @@ export function AppShell({ children, user }: AppShellProps) {
     return () => window.removeEventListener('keydown', openQuickCapture);
   }, [isChatRoute, isPublicRoute, router]);
 
-  if (isPublicRoute || isOnboardingRoute) {
+  if (isPublicRoute || isOnboardingRoute || isInviteRoute) {
     return <main className="min-h-dvh">{children}</main>;
   }
+
+  const isViewer = user?.activeLedgerRole === 'viewer';
 
   return (
     <div className="min-h-dvh bg-background">
@@ -124,18 +133,30 @@ export function AppShell({ children, user }: AppShellProps) {
           <span className="hidden pl-3 text-[11px] font-medium text-slate-500 lg:block">Sổ chi tiêu</span>
         </Link>
 
-        <div className="px-2 lg:px-3">
-          <Link
-            href="/chat"
-            aria-label="Ghi giao dịch nhanh"
-            aria-current={pathname === '/chat' ? 'page' : undefined}
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 lg:justify-start"
-          >
-            <CirclePlus className="size-4 shrink-0" />
-            <span className="hidden flex-1 text-left lg:inline">Ghi nhanh</span>
-            <kbd className="hidden rounded border border-white/30 px-1.5 py-0.5 text-[10px] lg:inline">N</kbd>
-          </Link>
+        <div className="mb-2 hidden px-3 lg:block">
+          <LedgerSwitcher compact />
         </div>
+
+        {!isViewer ? (
+          <div className="px-2 lg:px-3">
+            <Link
+              href="/chat"
+              aria-label="Ghi giao dịch nhanh"
+              aria-current={pathname === '/chat' ? 'page' : undefined}
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-2.5 text-sm font-semibold text-white transition hover:bg-emerald-800 lg:justify-start"
+            >
+              <CirclePlus className="size-4 shrink-0" />
+              <span className="hidden flex-1 text-left lg:inline">Ghi nhanh</span>
+              <kbd className="hidden rounded border border-white/30 px-1.5 py-0.5 text-[10px] lg:inline">N</kbd>
+            </Link>
+          </div>
+        ) : (
+          <div className="hidden px-3 lg:block">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] font-medium text-amber-800">
+              Quyền Chỉ xem
+            </div>
+          </div>
+        )}
 
         <nav aria-label="Điều hướng chính" className="mt-5 flex-1 space-y-1 px-2 lg:px-3">
           {desktopNavigation.map(({ href, label, icon: Icon }) => {

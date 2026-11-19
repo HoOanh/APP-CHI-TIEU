@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+import { assertLedgerAccess, LedgerAccessError, type LedgerRole } from '@/lib/ledger-access';
 
 interface RouteContext { params: Promise<{ id: string }> }
 
@@ -25,6 +26,27 @@ function isValidCalendarDate(value: string) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+async function verifyDebtAccess(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userId: number,
+  debtId: string,
+  minRole: LedgerRole,
+) {
+  const existing = await db.execute({
+    sql: 'SELECT id, user_id, ledger_id FROM debts WHERE id = ? LIMIT 1',
+    args: [debtId],
+  });
+  const row = existing.rows[0];
+  if (!row) return null;
+
+  if (row.ledger_id !== null && row.ledger_id !== undefined) {
+    await assertLedgerAccess(db, userId, Number(row.ledger_id), minRole);
+  } else if (Number(row.user_id) !== userId) {
+    throw new LedgerAccessError('Bạn không có quyền truy cập khoản công nợ này.', 403);
+  }
+  return row;
+}
+
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const user = await getCurrentUser();
@@ -34,19 +56,25 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     const db = await getDb();
+    const accessRow = await verifyDebtAccess(db, user.id, id, 'viewer');
+    if (!accessRow) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
     const query = `
       SELECT d.*,
              a.name AS account_name,
              COALESCE((SELECT SUM(amount) FROM debt_payments dp WHERE dp.debt_id = d.id), 0) AS paid_amount
       FROM debts d
       LEFT JOIN accounts a ON a.id = d.account_id
-      WHERE d.id = ? AND d.user_id = ?
+      WHERE d.id = ?
     `;
-    const debt = await db.execute({ sql: query, args: [id, user.id] });
-    
+    const debt = await db.execute({ sql: query, args: [id] });
+
     if (debt.rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     return NextResponse.json(debt.rows[0]);
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch debt' }, { status: 500 });
   }
@@ -68,6 +96,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const { name, creditor, direction, account_id, total_amount, interest_rate, start_date, due_date, note, status } = parsed.data;
     const db = await getDb();
 
+    const accessRow = await verifyDebtAccess(db, user.id, id, 'editor');
+    if (!accessRow) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     await db.execute({
       sql: `
         UPDATE debts
@@ -81,17 +114,20 @@ export async function PUT(request: NextRequest, context: RouteContext) {
             due_date = ?,
             note = ?,
             status = COALESCE(?, status)
-        WHERE id = ? AND user_id = ?
+        WHERE id = ?
       `,
-      args: [name, creditor, direction ?? null, account_id ?? null, total_amount, interest_rate, start_date, due_date, note.trim(), status ?? null, id, user.id]
+      args: [name, creditor, direction ?? null, account_id ?? null, total_amount, interest_rate, start_date, due_date, note.trim(), status ?? null, id]
     });
-    
-    const updated = await db.execute({ sql: 'SELECT * FROM debts WHERE id = ? AND user_id = ?', args: [id, user.id] });
+
+    const updated = await db.execute({ sql: 'SELECT * FROM debts WHERE id = ?', args: [id] });
     if (!updated.rows[0]) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     return NextResponse.json(updated.rows[0]);
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to update debt' }, { status: 500 });
   }
@@ -106,16 +142,23 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     const db = await getDb();
-    
+    const accessRow = await verifyDebtAccess(db, user.id, id, 'editor');
+    if (!accessRow) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const stmts = [
-      { sql: 'DELETE FROM debt_payments WHERE debt_id = ? AND user_id = ?', args: [id, user.id] },
-      { sql: 'DELETE FROM debt_jars WHERE debt_id = ? AND user_id = ?', args: [id, user.id] },
-      { sql: 'DELETE FROM debts WHERE id = ? AND user_id = ?', args: [id, user.id] }
+      { sql: 'DELETE FROM debt_payments WHERE debt_id = ?', args: [id] },
+      { sql: 'DELETE FROM debt_jars WHERE debt_id = ?', args: [id] },
+      { sql: 'DELETE FROM debts WHERE id = ?', args: [id] }
     ];
-    
+
     await db.batch(stmts, 'write');
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to delete debt' }, { status: 500 });
   }

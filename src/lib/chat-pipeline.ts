@@ -24,9 +24,11 @@ import {
   type ParsedTransaction,
   type PendingTransactionForCorrection,
 } from './gemini';
+import { assertLedgerAccess, LedgerAccessError, notifyOtherLedgerMembers } from './ledger-access';
 import { ensureUserLedgerAndAccount } from './ledger-context';
 import { UNCLASSIFIED_EXPENSE } from './schema';
 import { formatCurrency, getVietnamToday } from './utils';
+import { sendPushToUser } from './web-push';
 
 export const MAX_CHAT_IMAGES = 6;
 export const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -40,6 +42,7 @@ export interface ChatImagePayload {
 export interface ChatPipelineInput {
   db: Client;
   userId: number;
+  userName?: string;
   message: string;
   images: ChatImagePayload[];
   mode?: 'auto' | 'expense' | 'debt';
@@ -106,6 +109,12 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
 
   try {
     const ctx = await ensureUserLedgerAndAccount(db, userId);
+    const grant = await assertLedgerAccess(db, userId, ctx.ledgerId, 'viewer');
+    const getActorName = async () => {
+      if (input.userName) return input.userName;
+      const uRes = await db.execute({ sql: 'SELECT name FROM users WHERE id = ? LIMIT 1', args: [userId] });
+      return String(uRes.rows[0]?.name || 'Thành viên');
+    };
 
     if (requestId) {
       if (!/^[a-z0-9_-]{8,80}$/i.test(requestId)) {
@@ -156,7 +165,8 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
             })).rows.length > 0,
           };
       if (debtCheck.hasActive) {
-        return await handleDebtIntent({
+        await assertLedgerAccess(db, userId, ctx.ledgerId, 'editor');
+        const debtOut = await handleDebtIntent({
           db,
           userId,
           ledgerId: ctx.ledgerId,
@@ -165,6 +175,17 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
           images,
           source,
         });
+        if (debtOut.status === 201 && debtOut.body.receiptData) {
+          void notifyOtherLedgerMembers(db, sendPushToUser, {
+            ledgerId: ctx.ledgerId,
+            actorUserId: userId,
+            actorName: await getActorName(),
+            title: `Sổ "${grant.ledgerName}" vừa cập nhật công nợ`,
+            body: debtOut.body.message || debtOut.body.receiptData.debt_name,
+            url: '/debts',
+          }).catch(() => {});
+        }
+        return debtOut;
       }
     }
 
@@ -184,7 +205,10 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       };
     }
 
-    // 3. Reject ambiguous edit-old-transaction instructions via chat
+    // 3. Enforce editor access before any write / AI expense parsing path
+    await assertLedgerAccess(db, userId, ctx.ledgerId, 'editor');
+
+    // 4. Reject ambiguous edit-old-transaction instructions via chat
     if (
       requestId
       && !images.length
@@ -227,6 +251,16 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
           }] : []),
         ], 'write');
         const createdId = Number(insertRes[0].lastInsertRowid) || 0;
+        if (Number(insertRes[0].rowsAffected) > 0) {
+          void notifyOtherLedgerMembers(db, sendPushToUser, {
+            ledgerId: ctx.ledgerId,
+            actorUserId: userId,
+            actorName: await getActorName(),
+            title: `Sổ "${grant.ledgerName}" vừa chuyển ví`,
+            body: `${transfer.description} (${formatCurrency(transfer.amount)})`,
+            url: '/expenses',
+          }).catch(() => {});
+        }
         return {
           status: 201,
           body: {
@@ -358,12 +392,24 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
         );
 
         const budgetAlerts = saved.inserted && fastMatch.type === 'expense'
-          ? await evaluateBudgetAlerts(db, userId, [{
+          ? await evaluateBudgetAlerts(db, userId, ctx.ledgerId, [{
               categoryId: fastMatch.categoryId,
               expenseDate: fastMatch.date,
               addedAmount: fastMatch.amount,
             }])
           : [];
+
+        if (saved.inserted) {
+          const sign = fastMatch.type === 'income' ? '+' : '−';
+          void notifyOtherLedgerMembers(db, sendPushToUser, {
+            ledgerId: ctx.ledgerId,
+            actorUserId: userId,
+            actorName: await getActorName(),
+            title: `Sổ "${grant.ledgerName}" vừa có giao dịch mới`,
+            body: `${fastMatch.description} (${sign}${formatCurrency(fastMatch.amount)})`,
+            url: '/expenses',
+          }).catch(() => {});
+        }
 
         return {
           status: saved.inserted ? 201 : 200,
@@ -494,11 +540,26 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       ? await evaluateBudgetAlerts(
           db,
           userId,
+          ctx.ledgerId,
           transactions
             .filter((t) => t.type === 'expense')
             .map((t) => ({ categoryId: t.category_id, expenseDate: t.expense_date, addedAmount: t.amount })),
         )
       : [];
+
+    if (saved.inserted && transactions.length > 0) {
+      const first = transactions[0];
+      const sign = first.type === 'income' ? '+' : '−';
+      const extra = transactions.length > 1 ? ` (+${transactions.length - 1} khoản khác)` : '';
+      void notifyOtherLedgerMembers(db, sendPushToUser, {
+        ledgerId: ctx.ledgerId,
+        actorUserId: userId,
+        actorName: await getActorName(),
+        title: `Sổ "${grant.ledgerName}" vừa có giao dịch mới`,
+        body: `${first.description} (${sign}${formatCurrency(first.amount)})${extra}`,
+        url: '/expenses',
+      }).catch(() => {});
+    }
 
     return {
       status: saved.inserted ? 201 : 200,
@@ -511,6 +572,12 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       },
     };
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return {
+        status: error.status,
+        body: { error: error.message },
+      };
+    }
     if (error instanceof AiRateLimitError) {
       return {
         status: 429,
@@ -620,6 +687,7 @@ async function handleDebtIntent(input: {
 async function evaluateBudgetAlerts(
   db: Client,
   userId: number,
+  ledgerId: number,
   items: Array<{ categoryId: string; expenseDate: string; addedAmount: number }>,
 ) {
   const expenseGroups = new Map<string, { categoryId: string; expenseDate: string; addedAmount: number }>();
@@ -630,7 +698,7 @@ async function evaluateBudgetAlerts(
     else expenseGroups.set(key, { ...item });
   }
   const alerts = await Promise.allSettled(
-    [...expenseGroups.values()].map((group) => getBudgetAlert({ db, userId, ...group })),
+    [...expenseGroups.values()].map((group) => getBudgetAlert({ db, userId, ledgerId, ...group })),
   );
   return alerts.flatMap((alert) => alert.status === 'fulfilled' && alert.value ? [alert.value] : []);
 }

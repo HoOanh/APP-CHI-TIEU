@@ -50,6 +50,7 @@ import { CategoryIcon } from '@/components/CategoryIcon';
 import Link from 'next/link';
 import { clearPwaCache } from '@/lib/pwa-cache';
 import { AccountsManager } from '@/components/AccountsManager';
+import { LedgersManager } from '@/components/LedgersManager';
 import { ImportExportManager } from '@/components/ImportExportManager';
 import { ProfileModulesSettings } from '@/components/ProfileModulesSettings';
 import { RecurringRulesManager } from '@/components/RecurringRulesManager';
@@ -346,7 +347,7 @@ export default function SettingsPage() {
       <div className="md:grid md:grid-cols-[minmax(0,1fr)] xl:grid-cols-[190px_minmax(0,1fr)] xl:gap-7">
         <nav aria-label="Mục cài đặt" className="sticky top-6 hidden h-fit rounded-2xl border border-slate-200 bg-white p-2 xl:block">
           {[
-            ['#ho-so', 'Hồ sơ'], ['#nhu-cau', 'Nhu cầu & Tính năng'], ['#vi-tien', 'Ví tiền'],
+            ['#ho-so', 'Hồ sơ'], ['#nhu-cau', 'Nhu cầu & Tính năng'], ['#so-chung', 'Sổ chung'], ['#vi-tien', 'Ví tiền'],
             ['#ai-ca-nhan', 'AI cá nhân'], ['#nhac-nho', 'Nhắc nhở'], ['#danh-muc', 'Danh mục'], ['#du-lieu', 'Dữ liệu'],
           ].map(([href, label]) => <a key={href} href={href} className="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{label}</a>)}
         </nav>
@@ -460,6 +461,8 @@ export default function SettingsPage() {
           onModulesUpdated={(nextModules) => setProfile((current) => current ? { ...current, modules: nextModules } : current)}
         />
       ) : null}
+
+      <LedgersManager key={`ledgers-${dataRevision}`} />
 
       <AccountsManager key={`accounts-${dataRevision}`} />
 

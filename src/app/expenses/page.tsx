@@ -26,7 +26,16 @@ interface Expense {
   to_account_id: number | null;
   account_name: string | null;
   to_account_name: string | null;
+  created_by_name: string | null;
   type: 'income' | 'expense' | 'transfer';
+}
+
+interface LedgerBadgeInfo {
+  id: number;
+  name: string;
+  kind: 'personal' | 'family' | 'business';
+  role: 'owner' | 'editor' | 'viewer';
+  isShared: boolean;
 }
 
 function mapExpenseRow(item: Record<string, unknown>): Expense {
@@ -41,6 +50,7 @@ function mapExpenseRow(item: Record<string, unknown>): Expense {
     to_account_id: item.to_account_id ? Number(item.to_account_id) : null,
     account_name: item.account_name ? String(item.account_name) : null,
     to_account_name: item.to_account_name ? String(item.to_account_name) : null,
+    created_by_name: item.created_by_name ? String(item.created_by_name) : null,
     category: {
       id: String(item.category_id || ''),
       name: String(item.category_name || 'Khác'),
@@ -75,6 +85,7 @@ export default function ExpensesPage() {
   const [totalIncome, setTotalIncome] = useState(0);
   const [totalExpense, setTotalExpense] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [ledgerInfo, setLedgerInfo] = useState<LedgerBadgeInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -106,6 +117,7 @@ export default function ExpensesPage() {
         totalIncome: number;
         totalExpense: number;
         nextCursor?: string | null;
+        ledger?: LedgerBadgeInfo;
       } = await response.json();
       if (signal.aborted) return;
       setExpenses((data.items ?? []).map(mapExpenseRow));
@@ -113,6 +125,7 @@ export default function ExpensesPage() {
       setTotalIncome(Number(data.totalIncome) || 0);
       setTotalExpense(Number(data.totalExpense) || 0);
       setNextCursor(data.nextCursor ?? null);
+      if (data.ledger) setLedgerInfo(data.ledger);
     } catch {
       if (!signal.aborted) setLoadError(true);
     } finally {
@@ -166,6 +179,7 @@ export default function ExpensesPage() {
           totalIncome: number;
           totalExpense: number;
           nextCursor?: string | null;
+          ledger?: LedgerBadgeInfo;
         }>;
       })
       .then((data) => {
@@ -175,6 +189,7 @@ export default function ExpensesPage() {
         setTotalIncome(Number(data.totalIncome) || 0);
         setTotalExpense(Number(data.totalExpense) || 0);
         setNextCursor(data.nextCursor ?? null);
+        if (data.ledger) setLedgerInfo(data.ledger);
         setLoadError(false);
       })
       .catch(() => {
@@ -223,6 +238,9 @@ export default function ExpensesPage() {
     };
   }, [expenses]);
 
+  const isViewer = ledgerInfo?.role === 'viewer';
+  const showCreatorBadge = Boolean(ledgerInfo?.isShared);
+
   return (
     <div className="mx-auto min-h-screen w-full max-w-7xl bg-[#f7f9fb] pb-nav">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
@@ -242,7 +260,13 @@ export default function ExpensesPage() {
             >
               Xuất CSV
             </Button>
-            <ManualTransactionDialog compact onSaved={() => void fetchExpenses()} />
+            {isViewer ? (
+              <span className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800">
+                Chỉ xem
+              </span>
+            ) : (
+              <ManualTransactionDialog compact onSaved={() => void fetchExpenses()} />
+            )}
           </div>
         </div>
 
@@ -309,7 +333,7 @@ export default function ExpensesPage() {
         {!isLoading && loadError ? <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-white p-4"><p className="text-sm text-rose-800">Không tải được danh sách giao dịch.</p><Button variant="outline" onClick={() => void fetchExpenses()}>Thử lại</Button></div> : null}
         {!isLoading && !loadError && dates.length === 0 ? (activeSearch || activeType !== 'all' || activeAccountId !== 'all' ? <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Không tìm thấy giao dịch phù hợp bộ lọc.</p> : <EmptyTransactions />) : null}
         {!isLoading && !loadError && dates.length > 0 ? <>
-          <div className="space-y-5 xl:hidden">{dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} onDelete={setPendingDeleteId} onSaved={() => void fetchExpenses()} />)}</div>
+          <div className="space-y-5 xl:hidden">{dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} isViewer={isViewer} showCreatorBadge={showCreatorBadge} onDelete={setPendingDeleteId} onSaved={() => void fetchExpenses()} />)}</div>
           <section className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white xl:block">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
@@ -327,7 +351,7 @@ export default function ExpensesPage() {
                     <th className="px-4 py-3 font-medium">Mô tả</th>
                     <th className="px-4 py-3 font-medium">Ghi chú</th>
                     <th className="px-6 py-3 text-right font-medium">Số tiền</th>
-                    <th className="w-24 px-4 py-3 text-right font-medium">Thao tác</th>
+                    {!isViewer ? <th className="w-24 px-4 py-3 text-right font-medium">Thao tác</th> : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -354,27 +378,36 @@ export default function ExpensesPage() {
                             </span>
                           )}
                         </td>
-                        <td className="max-w-[22rem] truncate px-4 py-3.5 font-medium text-slate-800">{expense.description}</td>
+                        <td className="max-w-[22rem] px-4 py-3.5">
+                          <span className="block truncate font-medium text-slate-800">{expense.description}</span>
+                          {showCreatorBadge && expense.created_by_name ? (
+                            <span className="mt-0.5 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                              Bởi {expense.created_by_name}
+                            </span>
+                          ) : null}
+                        </td>
                         <td className="max-w-[18rem] truncate px-4 py-3.5 text-slate-400">{expense.note || '—'}</td>
                         <td className={cn('whitespace-nowrap px-6 py-3.5 text-right font-semibold tabular-nums', isTransfer ? 'text-sky-700' : expense.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>
                           {isTransfer ? '' : expense.type === 'income' ? '+' : '−'}{formatCurrency(expense.amount)}
                         </td>
-                        <td className="px-4 py-2">
-                          <div className="flex justify-end gap-1">
-                            <ManualTransactionDialog
-                              compact
-                              transaction={{
-                                ...expense,
-                                category_id: expense.category.id || null,
-                                date: expense.date,
-                              }}
-                              onSaved={() => void fetchExpenses()}
-                            />
-                            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setPendingDeleteId(expense.id)} className="text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100" aria-label={`Xóa ${expense.description}`}>
-                              <Trash2 className="size-4" />
-                            </Button>
-                          </div>
-                        </td>
+                        {!isViewer ? (
+                          <td className="px-4 py-2">
+                            <div className="flex justify-end gap-1">
+                              <ManualTransactionDialog
+                                compact
+                                transaction={{
+                                  ...expense,
+                                  category_id: expense.category.id || null,
+                                  date: expense.date,
+                                }}
+                                onSaved={() => void fetchExpenses()}
+                              />
+                              <Button type="button" variant="ghost" size="icon-sm" onClick={() => setPendingDeleteId(expense.id)} className="text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100" aria-label={`Xóa ${expense.description}`}>
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   }))}
@@ -414,14 +447,40 @@ function FilterChip({ active, label, color, onClick }: { active: boolean; label:
   </button>;
 }
 
-function TransactionGroup({ date, group, onDelete, onSaved }: { date: string; group: { net: number; items: Expense[] }; onDelete: (id: string) => void; onSaved: () => void }) {
+function TransactionGroup({
+  date,
+  group,
+  isViewer,
+  showCreatorBadge,
+  onDelete,
+  onSaved,
+}: {
+  date: string;
+  group: { net: number; items: Expense[] };
+  isViewer: boolean;
+  showCreatorBadge: boolean;
+  onDelete: (id: string) => void;
+  onSaved: () => void;
+}) {
   return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
     <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5"><p className="text-xs font-semibold text-slate-600">{formatShortDate(date)}</p><p className={cn('text-xs font-semibold tabular-nums', group.net >= 0 ? 'text-[#00a970]' : 'text-[#f15b64]')}>{group.net >= 0 ? '+' : '−'}{formatCurrency(Math.abs(group.net))}</p></div>
-    <div className="divide-y divide-slate-100">{group.items.map((expense) => <TransactionRow key={expense.id} expense={expense} onDelete={() => onDelete(expense.id)} onSaved={onSaved} />)}</div>
+    <div className="divide-y divide-slate-100">{group.items.map((expense) => <TransactionRow key={expense.id} expense={expense} isViewer={isViewer} showCreatorBadge={showCreatorBadge} onDelete={() => onDelete(expense.id)} onSaved={onSaved} />)}</div>
   </section>;
 }
 
-function TransactionRow({ expense, onDelete, onSaved }: { expense: Expense; onDelete: () => void; onSaved: () => void }) {
+function TransactionRow({
+  expense,
+  isViewer,
+  showCreatorBadge,
+  onDelete,
+  onSaved,
+}: {
+  expense: Expense;
+  isViewer: boolean;
+  showCreatorBadge: boolean;
+  onDelete: () => void;
+  onSaved: () => void;
+}) {
   const isTransfer = expense.type === 'transfer';
   return <div className="group flex min-w-0 items-center gap-3 px-3.5 py-3">
     {isTransfer ? (
@@ -437,15 +496,18 @@ function TransactionRow({ expense, onDelete, onSaved }: { expense: Expense; onDe
         {isTransfer
           ? `${expense.account_name || 'Ví'} → ${expense.to_account_name || 'Ví'}`
           : expense.note || [expense.category.name, expense.account_name].filter(Boolean).join(' · ')}
+        {showCreatorBadge && expense.created_by_name ? ` · Bởi ${expense.created_by_name}` : ''}
       </p>
     </div>
     <p className={cn('shrink-0 whitespace-nowrap text-[13px] font-semibold tabular-nums', isTransfer ? 'text-sky-700' : expense.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>
       {isTransfer ? '' : expense.type === 'income' ? '+' : '−'}{formatCurrency(expense.amount)}
     </p>
-    <div className="ml-0.5 flex shrink-0 items-center gap-0.5">
-      <ManualTransactionDialog compact transaction={{ ...expense, category_id: expense.category.id || null, date: expense.date }} onSaved={onSaved} />
-      <Button type="button" variant="ghost" size="icon-sm" onClick={onDelete} className="text-slate-300 hover:bg-rose-50 hover:text-[#f15b64]" aria-label={`Xóa ${expense.description}`}><Trash2 className="size-3.5" /></Button>
-    </div>
+    {!isViewer ? (
+      <div className="ml-0.5 flex shrink-0 items-center gap-0.5">
+        <ManualTransactionDialog compact transaction={{ ...expense, category_id: expense.category.id || null, date: expense.date }} onSaved={onSaved} />
+        <Button type="button" variant="ghost" size="icon-sm" onClick={onDelete} className="text-slate-300 hover:bg-rose-50 hover:text-[#f15b64]" aria-label={`Xóa ${expense.description}`}><Trash2 className="size-3.5" /></Button>
+      </div>
+    ) : null}
   </div>;
 }
 

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
+import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 interface RouteContext {
   params: Promise<{ id: string; paymentId: string }>;
@@ -16,6 +18,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const { id, paymentId } = await context.params;
     const deleteExpense = request.nextUrl.searchParams.get('delete_expense') !== '0';
     const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
 
     const paymentRes = await db.execute({
       sql: 'SELECT id, expense_id FROM debt_payments WHERE id = ? AND debt_id = ? AND user_id = ? LIMIT 1',
@@ -65,6 +69,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       throw err;
     }
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[DELETE /api/debts/[id]/payments/[paymentId]]', error);
     return NextResponse.json({ error: 'Không thể xóa thanh toán.' }, { status: 500 });
   }

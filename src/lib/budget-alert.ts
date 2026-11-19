@@ -9,17 +9,26 @@ export interface BudgetAlert {
 export async function getBudgetAlert({
   db,
   userId,
+  ledgerId,
   categoryId,
   expenseDate,
   addedAmount,
 }: {
   db: Client;
   userId: number;
+  ledgerId?: number;
   categoryId: string | number;
   expenseDate: string;
   addedAmount: number;
 }): Promise<BudgetAlert | null> {
   const month = expenseDate.slice(0, 7);
+  const scopeWhere = ledgerId
+    ? '(b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?))'
+    : 'b.user_id = ?';
+  const expenseScope = ledgerId
+    ? '(e.ledger_id = b.ledger_id OR (e.ledger_id IS NULL AND e.user_id = b.user_id))'
+    : 'e.user_id = b.user_id';
+  const scopeArgs = ledgerId ? [ledgerId, userId] : [userId];
   const result = await db.execute({
     sql: `SELECT b.budget_amount, b.rollover_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit,
                  c.name AS category_name,
@@ -27,13 +36,13 @@ export async function getBudgetAlert({
                  COALESCE(SUM(CASE WHEN e.expense_date = ? THEN e.amount ELSE 0 END), 0) AS day_spent
           FROM budget_jars b
           LEFT JOIN categories c ON c.id = b.category_id
-          LEFT JOIN expenses e ON e.user_id = b.user_id
+          LEFT JOIN expenses e ON ${expenseScope}
             AND e.category_id = b.category_id
             AND e.type = 'expense'
             AND strftime('%Y-%m', e.expense_date) = b.month
-          WHERE b.user_id = ? AND b.category_id = ? AND b.month = ?
+          WHERE ${scopeWhere} AND b.category_id = ? AND b.month = ?
           GROUP BY b.id, b.budget_amount, b.rollover_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit, c.name`,
-    args: [expenseDate, userId, categoryId, month],
+    args: [expenseDate, ...scopeArgs, categoryId, month],
   });
   const budget = result.rows[0];
   if (!budget) return null;

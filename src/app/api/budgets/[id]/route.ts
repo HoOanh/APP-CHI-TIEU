@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
+import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 interface RouteContext { params: Promise<{ id: string }> }
 
@@ -35,6 +37,16 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Kiểm tra danh mục, tháng, số tiền và số ngày.' }, { status: 400 });
     }
     const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    const existingRes = await db.execute({ sql: 'SELECT ledger_id, user_id FROM budget_jars WHERE id = ?', args: [id] });
+    const existing = existingRes.rows[0];
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const targetLedgerId = existing.ledger_id ? Number(existing.ledger_id) : ledgerId;
+    if (!existing.ledger_id && Number(existing.user_id) !== user.id) {
+      return NextResponse.json({ error: 'Bạn không có quyền truy cập ngân sách này.' }, { status: 403 });
+    }
+    await assertLedgerAccess(db, user.id, targetLedgerId, 'editor');
+
     const category = await db.execute({ sql: "SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?) AND kind <> 'income'", args: [categoryId, user.id] });
     if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục chi tiêu không hợp lệ.' }, { status: 400 });
     await db.execute({
@@ -42,16 +54,19 @@ export async function PUT(request: NextRequest, context: RouteContext) {
             SET category_id = ?, month = ?, budget_amount = ?, budget_basis = ?, daily_amount = ?,
                 budget_days = ?, warning_percent = ?, daily_limit = ?, frequency_limit = ?, frequency_period = ?,
                 rollover_enabled = ?, rollover_mode = ?
-            WHERE id = ? AND user_id = ?`,
-      args: [categoryId, month, amount, basis, basis === 'daily' ? dailyAmount : 0, basis === 'daily' ? days : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod, rolloverEnabled, rolloverMode, id, user.id],
+            WHERE id = ?`,
+      args: [categoryId, month, amount, basis, basis === 'daily' ? dailyAmount : 0, basis === 'daily' ? days : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod, rolloverEnabled, rolloverMode, id],
     });
-    
-    const updated = await db.execute({ sql: 'SELECT * FROM budget_jars WHERE id = ? AND user_id = ?', args: [id, user.id] });
+
+    const updated = await db.execute({ sql: 'SELECT * FROM budget_jars WHERE id = ?', args: [id] });
     if (!updated.rows[0]) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     return NextResponse.json(updated.rows[0]);
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to update budget' }, { status: 500 });
   }
@@ -75,12 +90,25 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     const db = await getDb();
-    const deleted = await db.execute({ sql: 'DELETE FROM budget_jars WHERE id = ? AND user_id = ?', args: [id, user.id] });
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    const existingRes = await db.execute({ sql: 'SELECT ledger_id, user_id FROM budget_jars WHERE id = ?', args: [id] });
+    const existing = existingRes.rows[0];
+    if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const targetLedgerId = existing.ledger_id ? Number(existing.ledger_id) : ledgerId;
+    if (!existing.ledger_id && Number(existing.user_id) !== user.id) {
+      return NextResponse.json({ error: 'Bạn không có quyền xóa ngân sách này.' }, { status: 403 });
+    }
+    await assertLedgerAccess(db, user.id, targetLedgerId, 'editor');
+
+    const deleted = await db.execute({ sql: 'DELETE FROM budget_jars WHERE id = ?', args: [id] });
     if (Number(deleted.rowsAffected) === 0) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to delete budget' }, { status: 500 });
   }

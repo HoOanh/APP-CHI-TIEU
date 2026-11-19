@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { computeRolloverCarryover } from '@/lib/budget-evaluator';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 export async function POST(request: NextRequest) {
@@ -18,6 +19,7 @@ export async function POST(request: NextRequest) {
 
     const db = await getDb();
     const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
 
     const previousBudgets = await db.execute({
       sql: `SELECT b.*,
@@ -97,6 +99,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, copied: stmts.length });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[POST /api/budgets/copy]', error);
     return NextResponse.json({ error: 'Failed to copy budgets' }, { status: 500 });
   }

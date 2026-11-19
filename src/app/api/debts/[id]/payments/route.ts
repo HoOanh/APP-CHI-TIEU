@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
 import { recordDebtPaymentWithSync } from '@/lib/debt-payments-sync';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
+import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 const paymentSchema = z.object({
   amount: z.coerce.number().finite().positive(),
@@ -25,6 +27,8 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'viewer');
     const payments = await db.execute({
       sql: `SELECT dp.id, dp.debt_id, dp.amount, dp.payment_date, dp.note, dp.account_id, dp.expense_id, dp.created_at,
                    a.name AS account_name
@@ -36,6 +40,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     });
     return NextResponse.json(payments.rows);
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[GET /api/debts/[id]/payments]', error);
     return NextResponse.json({ error: 'Failed to fetch payments' }, { status: 500 });
   }
@@ -56,6 +63,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
     const result = await recordDebtPaymentWithSync({
       db,
       userId: user.id,
@@ -74,6 +83,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ success: true, ...result }, { status: 201 });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[POST /api/debts/[id]/payments]', error);
     return NextResponse.json({ error: 'Failed to create payment' }, { status: 500 });
   }

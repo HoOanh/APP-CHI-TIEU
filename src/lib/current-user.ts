@@ -4,6 +4,7 @@ import { cache } from 'react';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { getUserLedgerContext } from '@/lib/ledger-context';
+import type { LedgerKind, LedgerRole } from '@/lib/ledger-access';
 import { DEFAULT_MODULES, type EnabledModules, type PersonaId } from '@/lib/modules';
 
 export interface CurrentUser {
@@ -17,6 +18,9 @@ export interface CurrentUser {
   personas: PersonaId[];
   modules: EnabledModules;
   activeLedgerId: number;
+  activeLedgerName?: string;
+  activeLedgerKind?: LedgerKind;
+  activeLedgerRole?: LedgerRole;
   defaultAccountId: number;
 }
 
@@ -95,6 +99,9 @@ async function getDevelopmentUser(): Promise<CurrentUser | null> {
     personas: ctx.personas,
     modules: ctx.modules,
     activeLedgerId: ctx.ledgerId,
+    activeLedgerName: ctx.activeLedgerName,
+    activeLedgerKind: ctx.activeLedgerKind,
+    activeLedgerRole: ctx.activeLedgerRole,
     defaultAccountId: ctx.defaultAccountId,
   };
 }
@@ -130,6 +137,9 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
       personas: ctx?.personas ?? ['speed_tracker'],
       modules: ctx?.modules ?? DEFAULT_MODULES,
       activeLedgerId: ctx?.ledgerId ?? 0,
+      activeLedgerName: ctx?.activeLedgerName ?? 'Ví cá nhân',
+      activeLedgerKind: ctx?.activeLedgerKind ?? 'personal',
+      activeLedgerRole: ctx?.activeLedgerRole ?? 'owner',
       defaultAccountId: ctx?.defaultAccountId ?? 0,
     };
   }

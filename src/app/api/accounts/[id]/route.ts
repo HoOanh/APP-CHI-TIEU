@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -35,6 +36,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const db = await getDb();
   const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+  try {
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
+  } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
   const existingRes = await db.execute({
     sql: 'SELECT id, is_default, archived FROM accounts WHERE id = ? AND ledger_id = ? LIMIT 1',
     args: [accountId, ledgerId],

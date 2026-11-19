@@ -42,8 +42,9 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
-  const redirectTo = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('redirectTo') === '/chat'
-    ? '/chat'
+  const rawRedirect = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('redirectTo') : null;
+  const redirectTo = rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
+    ? rawRedirect
     : '/';
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);

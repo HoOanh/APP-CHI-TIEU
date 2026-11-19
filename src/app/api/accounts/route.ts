@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 const createAccountSchema = z.object({
@@ -21,6 +22,14 @@ export async function GET(request: NextRequest) {
   const includeArchived = request.nextUrl.searchParams.get('includeArchived') === '1';
   const db = await getDb();
   const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+  try {
+    await assertLedgerAccess(db, user.id, ledgerId, 'viewer');
+  } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 
   const result = await db.execute({
     sql: `SELECT a.id, a.ledger_id, a.name, a.type, a.initial_balance, a.credit_limit,
@@ -71,6 +80,14 @@ export async function POST(request: NextRequest) {
 
   const db = await getDb();
   const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+  try {
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
+  } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
   const data = parsed.data;
 
   const duplicate = await db.execute({

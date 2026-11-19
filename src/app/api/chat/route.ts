@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
     const result = await processChatSubmission({
       db,
       userId: user.id,
+      userName: user.name,
       message,
       images,
       mode,
