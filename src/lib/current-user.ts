@@ -3,6 +3,8 @@ import 'server-only';
 import { cache } from 'react';
 import { auth } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { getUserLedgerContext } from '@/lib/ledger-context';
+import { DEFAULT_MODULES, type EnabledModules, type PersonaId } from '@/lib/modules';
 
 export interface CurrentUser {
   id: number;
@@ -10,6 +12,12 @@ export interface CurrentUser {
   name: string;
   image: string;
   isDevelopmentUser: boolean;
+  onboardedAt: string | null;
+  primaryPersona: PersonaId;
+  personas: PersonaId[];
+  modules: EnabledModules;
+  activeLedgerId: number;
+  defaultAccountId: number;
 }
 
 const PLACEHOLDER_CLIENT_ID = 'your-google-client-id';
@@ -34,8 +42,8 @@ async function getDevelopmentUser(): Promise<CurrentUser | null> {
 
   const db = await getDb();
   await db.execute({
-    sql: `INSERT INTO users (email, name, avatar)
-          VALUES (?, ?, '')
+    sql: `INSERT INTO users (email, name, avatar, onboarded_at)
+          VALUES (?, ?, '', datetime('now'))
           ON CONFLICT(email) DO UPDATE SET updated_at = datetime('now')`,
     args: [DEVELOPMENT_EMAIL, 'Local Developer'],
   });
@@ -74,12 +82,20 @@ async function getDevelopmentUser(): Promise<CurrentUser | null> {
     'write',
   );
 
+  const ctx = await getUserLedgerContext(db, id);
+
   return {
     id,
     email: String(row.email),
     name: String(row.name || 'Local Developer'),
     image: String(row.avatar || ''),
     isDevelopmentUser: true,
+    onboardedAt: ctx.onboardedAt,
+    primaryPersona: ctx.primaryPersona,
+    personas: ctx.personas,
+    modules: ctx.modules,
+    activeLedgerId: ctx.ledgerId,
+    defaultAccountId: ctx.defaultAccountId,
   };
 }
 
@@ -94,12 +110,27 @@ function getCachedDevelopmentUser() {
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const session = await auth();
   if (session?.user?.id && session.user.email) {
+    const userId = Number(session.user.id);
+    const db = await getDb();
+    let ctx: Awaited<ReturnType<typeof getUserLedgerContext>> | null = null;
+    try {
+      ctx = await getUserLedgerContext(db, userId);
+    } catch {
+      ctx = null;
+    }
+
     return {
-      id: Number(session.user.id),
+      id: userId,
       email: session.user.email,
       name: session.user.name || session.user.email,
       image: session.user.image || '',
       isDevelopmentUser: false,
+      onboardedAt: ctx?.onboardedAt ?? null,
+      primaryPersona: ctx?.primaryPersona ?? 'speed_tracker',
+      personas: ctx?.personas ?? ['speed_tracker'],
+      modules: ctx?.modules ?? DEFAULT_MODULES,
+      activeLedgerId: ctx?.ledgerId ?? 0,
+      defaultAccountId: ctx?.defaultAccountId ?? 0,
     };
   }
 

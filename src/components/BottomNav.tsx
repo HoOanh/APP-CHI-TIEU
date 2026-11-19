@@ -22,7 +22,7 @@ interface BottomNavUser {
 
 export function BottomNav({ user }: { user: BottomNavUser | null }) {
   const pathname = usePathname();
-  if (pathname === '/chat' || pathname === '/debt-chat') return null;
+  if (pathname === '/chat' || pathname === '/debt-chat' || pathname.startsWith('/onboarding')) return null;
 
   const leftItems = navItems.slice(0, 2);
   const rightItems = navItems.slice(2);

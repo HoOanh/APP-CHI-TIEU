@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { CirclePlus, LoaderCircle, PenLine } from 'lucide-react';
+import { ArrowRightLeft, CirclePlus, LoaderCircle, PenLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -24,15 +24,24 @@ interface CategoryOption {
   kind?: 'expense' | 'income' | 'both';
 }
 
+interface AccountOption {
+  id: number;
+  name: string;
+  type: string;
+  is_default: boolean;
+}
+
 interface TransactionSaveResult {
   id: string | number;
   amount: number;
   description: string;
-  category_id: string | number;
-  category_name: string;
+  category_id: string | number | null;
+  category_name: string | null;
+  account_id?: number | null;
+  to_account_id?: number | null;
   expense_date: string;
   note: string | null;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'transfer';
 }
 
 interface ManualTransactionDialogProps {
@@ -43,20 +52,35 @@ interface ManualTransactionDialogProps {
     id: string;
     amount: number;
     description: string;
-    category_id: string | number;
+    category_id: string | number | null;
+    account_id?: number | null;
+    to_account_id?: number | null;
     date: string;
     note: string | null;
-    type: 'income' | 'expense';
+    type: 'income' | 'expense' | 'transfer';
   };
 }
 
 const transactionSchema = z.object({
-  type: z.enum(['expense', 'income']),
+  type: z.enum(['expense', 'income', 'transfer']),
   amount: z.string().refine((value) => parseMoneyInput(value) > 0, 'Nhập số tiền lớn hơn 0.'),
   description: z.string().trim().min(1, 'Nhập nội dung giao dịch.').max(160, 'Nội dung tối đa 160 ký tự.'),
-  category_id: z.string().min(1, 'Chọn danh mục.'),
+  category_id: z.string(),
+  account_id: z.string(),
+  to_account_id: z.string(),
   expense_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Chọn ngày giao dịch.'),
   note: z.string().max(500, 'Ghi chú tối đa 500 ký tự.'),
+}).superRefine((values, context) => {
+  if (values.type === 'transfer') {
+    if (!values.account_id) {
+      context.addIssue({ code: 'custom', path: ['account_id'], message: 'Chọn ví nguồn.' });
+    }
+    if (!values.to_account_id || values.to_account_id === values.account_id) {
+      context.addIssue({ code: 'custom', path: ['to_account_id'], message: 'Chọn ví đích khác ví nguồn.' });
+    }
+  } else if (!values.category_id) {
+    context.addIssue({ code: 'custom', path: ['category_id'], message: 'Chọn danh mục.' });
+  }
 });
 
 type TransactionFormValues = z.infer<typeof transactionSchema>;
@@ -68,20 +92,38 @@ function FieldError({ message }: { message?: string }) {
 export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile = false, transaction }: ManualTransactionDialogProps) {
   const [open, setOpen] = useState(false);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const { showToast } = useToast();
   const form = useForm<TransactionFormValues>({
     resolver: zodResolver(transactionSchema),
-    defaultValues: { type: 'expense', amount: '', description: '', category_id: '', expense_date: getVietnamToday(), note: '' },
+    defaultValues: {
+      type: 'expense',
+      amount: '',
+      description: '',
+      category_id: '',
+      account_id: '',
+      to_account_id: '',
+      expense_date: getVietnamToday(),
+      note: '',
+    },
   });
   const type = useWatch({ control: form.control, name: 'type' });
   const categoryId = useWatch({ control: form.control, name: 'category_id' });
+  const accountId = useWatch({ control: form.control, name: 'account_id' });
+  const toAccountId = useWatch({ control: form.control, name: 'to_account_id' });
+
   const availableCategories = categories.filter((category) => {
     const kind = category.kind ?? (category.name === 'Thu nhập' ? 'income' : 'expense');
     return type === 'income'
       ? (kind === 'income' || kind === 'both' || category.name === 'Thu nhập')
       : (kind === 'expense' || kind === 'both');
   });
-  const activeCategoryId = availableCategories.some((category) => String(category.id) === categoryId) ? categoryId : String(availableCategories[0]?.id || '');
+  const activeCategoryId = availableCategories.some((category) => String(category.id) === categoryId)
+    ? categoryId
+    : String(availableCategories[0]?.id || '');
+
+  const showTransferTab = accounts.length > 1 || transaction?.type === 'transfer';
+  const showAccountPicker = accounts.length > 1 || type === 'transfer';
 
   useEffect(() => {
     if (!open) return;
@@ -89,40 +131,78 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       type: transaction.type,
       amount: formatMoneyInput(transaction.amount),
       description: transaction.description,
-      category_id: String(transaction.category_id),
+      category_id: transaction.category_id ? String(transaction.category_id) : '',
+      account_id: transaction.account_id ? String(transaction.account_id) : '',
+      to_account_id: transaction.to_account_id ? String(transaction.to_account_id) : '',
       expense_date: transaction.date.split('T')[0] || getVietnamToday(),
       note: transaction.note || '',
-    } : { type: 'expense', amount: '', description: '', category_id: '', expense_date: getVietnamToday(), note: '' });
-    fetch('/api/categories')
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Không thể tải danh mục.');
-        const data = await response.json() as CategoryOption[];
-        setCategories(data);
+    } : {
+      type: 'expense',
+      amount: '',
+      description: '',
+      category_id: '',
+      account_id: '',
+      to_account_id: '',
+      expense_date: getVietnamToday(),
+      note: '',
+    });
+
+    Promise.all([fetch('/api/categories'), fetch('/api/accounts')])
+      .then(async ([catResponse, accResponse]) => {
+        if (!catResponse.ok) throw new Error('Không thể tải danh mục.');
+        const catData = await catResponse.json() as CategoryOption[];
+        setCategories(catData);
         const currentCategory = form.getValues('category_id');
-        if (!data.some((category) => String(category.id) === currentCategory)) {
-          const firstExpense = data.find((category) => category.name !== 'Thu nhập');
+        if (!catData.some((category) => String(category.id) === currentCategory)) {
+          const firstExpense = catData.find((category) => (category.kind ?? 'expense') !== 'income' && category.name !== 'Thu nhập');
           form.setValue('category_id', firstExpense ? String(firstExpense.id) : '');
         }
+
+        if (accResponse.ok) {
+          const accData = await accResponse.json() as AccountOption[];
+          setAccounts(accData);
+          const defaultAcc = accData.find((a) => a.is_default) ?? accData[0];
+          const secondAcc = accData.find((a) => a.id !== defaultAcc?.id);
+          if (!form.getValues('account_id') && defaultAcc) {
+            form.setValue('account_id', String(defaultAcc.id));
+          }
+          if (!form.getValues('to_account_id') && secondAcc) {
+            form.setValue('to_account_id', String(secondAcc.id));
+          }
+        }
       })
-      .catch(() => showToast('Không thể tải danh mục', 'error'));
+      .catch(() => showToast('Không thể tải danh mục hoặc ví', 'error'));
   }, [form, open, showToast, transaction]);
 
   useEffect(() => {
-    if (!categories.length) return;
+    if (!categories.length || type === 'transfer') return;
     if (!availableCategories.some((category) => String(category.id) === categoryId)) {
       form.setValue('category_id', String(availableCategories[0]?.id || ''), { shouldValidate: false });
     }
-  }, [availableCategories, categories.length, categoryId, form]);
+  }, [availableCategories, categories.length, categoryId, form, type]);
 
   function resetForm() {
-    form.reset({ type: 'expense', amount: '', description: '', category_id: '', expense_date: getVietnamToday(), note: '' });
+    const defaultAcc = accounts.find((a) => a.is_default) ?? accounts[0];
+    const secondAcc = accounts.find((a) => a.id !== defaultAcc?.id);
+    form.reset({
+      type: 'expense',
+      amount: '',
+      description: '',
+      category_id: '',
+      account_id: defaultAcc ? String(defaultAcc.id) : '',
+      to_account_id: secondAcc ? String(secondAcc.id) : '',
+      expense_date: getVietnamToday(),
+      note: '',
+    });
   }
 
   async function saveTransaction(values: TransactionFormValues) {
     const transactionValues = {
       amount: parseMoneyInput(values.amount),
       description: values.description.trim(),
-      category_id: activeCategoryId,
+      category_id: values.type === 'transfer' ? null : activeCategoryId,
+      account_id: values.account_id ? Number(values.account_id) : undefined,
+      to_account_id: values.type === 'transfer' && values.to_account_id ? Number(values.to_account_id) : undefined,
       expense_date: values.expense_date,
       note: values.note.trim(),
       type: values.type,
@@ -133,8 +213,19 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
         showToast('Chỉnh sửa giao dịch cần kết nối mạng.', 'error');
         return;
       }
+      if (values.type === 'transfer') {
+        showToast('Chuyển khoản nội bộ cần kết nối mạng.', 'warning');
+        return;
+      }
       try {
-        await queueOfflineTransaction(transactionValues);
+        await queueOfflineTransaction({
+          amount: transactionValues.amount,
+          description: transactionValues.description,
+          category_id: activeCategoryId,
+          expense_date: transactionValues.expense_date,
+          note: transactionValues.note,
+          type: values.type,
+        });
         setOpen(false);
         resetForm();
         onSaved?.();
@@ -157,14 +248,21 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
         }),
       });
     } catch {
-      if (!transaction && clientRequestId) {
-        await queueOfflineTransaction(transactionValues, clientRequestId);
+      if (!transaction && clientRequestId && values.type !== 'transfer') {
+        await queueOfflineTransaction({
+          amount: transactionValues.amount,
+          description: transactionValues.description,
+          category_id: activeCategoryId,
+          expense_date: transactionValues.expense_date,
+          note: transactionValues.note,
+          type: values.type,
+        }, clientRequestId);
         setOpen(false);
         resetForm();
         onSaved?.();
         showToast('Mất kết nối; đã lưu giao dịch trên thiết bị', 'success', 'Giao dịch sẽ tự đồng bộ khi có mạng.');
       } else {
-        showToast('Mất kết nối; chưa thể cập nhật giao dịch.', 'error');
+        showToast('Mất kết nối; chưa thể lưu giao dịch.', 'error');
       }
       return;
     }
@@ -197,46 +295,114 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
         <DialogContent className="grid max-h-[calc(100dvh-1rem)] w-[min(560px,calc(100vw-1rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-[min(560px,calc(100vw-2rem))]">
           <DialogHeader className="border-b border-slate-200 px-5 py-4 pr-14">
             <DialogTitle>{transaction ? 'Sửa giao dịch' : 'Thêm giao dịch thủ công'}</DialogTitle>
-            <DialogDescription>{transaction ? 'Cập nhật nội dung, danh mục, ngày hoặc số tiền.' : 'Nhập giao dịch trực tiếp, không cần AI.'}</DialogDescription>
+            <DialogDescription>{transaction ? 'Cập nhật nội dung, danh mục, ví, ngày hoặc số tiền.' : 'Nhập giao dịch trực tiếp, không cần AI.'}</DialogDescription>
           </DialogHeader>
           <form onSubmit={form.handleSubmit(saveTransaction)} noValidate className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
             <div className="min-h-0 space-y-4 overflow-y-auto px-5 py-5">
-              <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+              <div className={`grid gap-1 rounded-xl bg-slate-100 p-1 ${showTransferTab ? 'grid-cols-3' : 'grid-cols-2'}`}>
                 <button type="button" onClick={() => form.setValue('type', 'expense', { shouldValidate: true })} aria-pressed={type === 'expense'} className={`min-h-10 rounded-lg text-sm font-semibold transition ${type === 'expense' ? 'bg-white text-red-700 shadow-sm' : 'text-slate-500'}`}>Khoản chi</button>
                 <button type="button" onClick={() => form.setValue('type', 'income', { shouldValidate: true })} aria-pressed={type === 'income'} className={`min-h-10 rounded-lg text-sm font-semibold transition ${type === 'income' ? 'bg-white text-green-800 shadow-sm' : 'text-slate-500'}`}>Khoản thu</button>
+                {showTransferTab ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      form.setValue('type', 'transfer', { shouldValidate: true });
+                      if (!form.getValues('description')) {
+                        form.setValue('description', 'Chuyển khoản giữa ví');
+                      }
+                    }}
+                    aria-pressed={type === 'transfer'}
+                    className={`flex min-h-10 items-center justify-center gap-1 rounded-lg text-sm font-semibold transition ${type === 'transfer' ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500'}`}
+                  >
+                    <ArrowRightLeft className="size-3.5" /> Chuyển ví
+                  </button>
+                ) : null}
               </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="manual-amount">Số tiền (VND)</Label>
                   <Input id="manual-amount" inputMode="numeric" autoComplete="off" placeholder="100.000" aria-invalid={Boolean(form.formState.errors.amount)} {...form.register('amount', { onChange: (event) => form.setValue('amount', formatMoneyInput(event.target.value)) })} className="h-12 text-lg font-semibold tabular-nums" />
                   <FieldError message={form.formState.errors.amount?.message} />
                 </div>
+
+                {showAccountPicker ? (
+                  <div className={type === 'transfer' ? 'space-y-2' : 'space-y-2 sm:col-span-2'}>
+                    <Label htmlFor="manual-account">{type === 'transfer' ? 'Từ ví' : type === 'income' ? 'Nhận vào ví' : 'Chi từ ví'}</Label>
+                    <Controller
+                      control={form.control}
+                      name="account_id"
+                      render={({ field }) => (
+                        <Select value={accountId || String(accounts[0]?.id || '')} onValueChange={field.onChange}>
+                          <SelectTrigger id="manual-account" aria-label="Ví nguồn">
+                            <SelectValue placeholder="Chọn ví" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {accounts.map((acc) => (
+                              <SelectItem key={acc.id} value={String(acc.id)}>{acc.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                    <FieldError message={form.formState.errors.account_id?.message} />
+                  </div>
+                ) : null}
+
+                {type === 'transfer' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="manual-to-account">Đến ví</Label>
+                    <Controller
+                      control={form.control}
+                      name="to_account_id"
+                      render={({ field }) => (
+                        <Select value={toAccountId} onValueChange={field.onChange}>
+                          <SelectTrigger id="manual-to-account" aria-label="Ví đích">
+                            <SelectValue placeholder="Chọn ví đích" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {accounts.filter((acc) => String(acc.id) !== accountId).map((acc) => (
+                              <SelectItem key={acc.id} value={String(acc.id)}>{acc.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                    <FieldError message={form.formState.errors.to_account_id?.message} />
+                  </div>
+                ) : null}
+
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="manual-description">Nội dung</Label>
-                  <Input id="manual-description" maxLength={160} placeholder="Ví dụ: Ăn sáng + cafe" aria-invalid={Boolean(form.formState.errors.description)} {...form.register('description')} />
+                  <Input id="manual-description" maxLength={160} placeholder={type === 'transfer' ? 'Ví dụ: Rút ATM / Nạp MoMo' : 'Ví dụ: Ăn sáng + cafe'} aria-invalid={Boolean(form.formState.errors.description)} {...form.register('description')} />
                   <FieldError message={form.formState.errors.description?.message} />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="manual-category">Danh mục</Label>
-                  <Controller control={form.control} name="category_id" render={({ field }) => <Select value={activeCategoryId} onValueChange={field.onChange}>
-                    <SelectTrigger id="manual-category" aria-label="Danh mục" aria-invalid={Boolean(form.formState.errors.category_id)}>
-                      <SelectValue placeholder="Chọn danh mục">
-                        {(() => {
-                          const selectedCategory = availableCategories.find((category) => String(category.id) === activeCategoryId);
-                          return selectedCategory ? (
-                            <span className="inline-flex min-w-0 items-center gap-2">
-                              <CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-6 rounded-md" iconClassName="size-3.5" />
-                              <span className="truncate">{selectedCategory.name}</span>
-                            </span>
-                          ) : 'Chọn danh mục';
-                        })()}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>{availableCategories.map((category) => <SelectItem key={category.id} value={String(category.id)}><span className="flex items-center gap-2"><CategoryIcon name={category.name} color={category.color} className="size-7 rounded-lg" iconClassName="size-3.5" />{category.name}</span></SelectItem>)}</SelectContent>
-                  </Select>} />
-                  <FieldError message={form.formState.errors.category_id?.message} />
-                </div>
+
+                {type !== 'transfer' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="manual-category">Danh mục</Label>
+                    <Controller control={form.control} name="category_id" render={({ field }) => <Select value={activeCategoryId} onValueChange={field.onChange}>
+                      <SelectTrigger id="manual-category" aria-label="Danh mục" aria-invalid={Boolean(form.formState.errors.category_id)}>
+                        <SelectValue placeholder="Chọn danh mục">
+                          {(() => {
+                            const selectedCategory = availableCategories.find((category) => String(category.id) === activeCategoryId);
+                            return selectedCategory ? (
+                              <span className="inline-flex min-w-0 items-center gap-2">
+                                <CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-6 rounded-md" iconClassName="size-3.5" />
+                                <span className="truncate">{selectedCategory.name}</span>
+                              </span>
+                            ) : 'Chọn danh mục';
+                          })()}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>{availableCategories.map((category) => <SelectItem key={category.id} value={String(category.id)}><span className="flex items-center gap-2"><CategoryIcon name={category.name} color={category.color} className="size-7 rounded-lg" iconClassName="size-3.5" />{category.name}</span></SelectItem>)}</SelectContent>
+                    </Select>} />
+                    <FieldError message={form.formState.errors.category_id?.message} />
+                  </div>
+                ) : null}
+
                 <Controller control={form.control} name="expense_date" render={({ field, fieldState }) => <DatePicker id="manual-date" label="Ngày giao dịch" value={field.value} onChange={field.onChange} invalid={Boolean(fieldState.error)} />} />
+
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="manual-note">Ghi chú <span className="font-normal text-slate-500">(không bắt buộc)</span></Label>
                   <Textarea id="manual-note" rows={3} maxLength={500} placeholder="Thêm thông tin nếu cần" {...form.register('note')} className="min-h-20 resize-y" />
@@ -246,7 +412,7 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
             </div>
             <div className="flex gap-2 border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
               <Button type="button" variant="outline" className="h-11 flex-1 rounded-xl" onClick={() => setOpen(false)}>Hủy</Button>
-              <Button type="submit" className="h-11 flex-1 rounded-xl font-semibold" disabled={form.formState.isSubmitting || !availableCategories.length}>
+              <Button type="submit" className="h-11 flex-1 rounded-xl font-semibold" disabled={form.formState.isSubmitting || (type !== 'transfer' && !availableCategories.length)}>
                 {form.formState.isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <CirclePlus className="size-4" />} {transaction ? 'Lưu thay đổi' : 'Lưu giao dịch'}
               </Button>
             </div>
