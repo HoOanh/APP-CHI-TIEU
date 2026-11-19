@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Check, Copy, KeyRound, Plus, Sparkles, Trash2, Zap } from 'lucide-react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { Copy, ExternalLink, KeyRound, Plus, Sparkles, Trash2, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,6 +35,16 @@ interface MerchantRuleItem {
   hit_count: number;
 }
 
+const transactionPath = '/api/shortcuts/transactions';
+const configuredInstallUrl = process.env.NEXT_PUBLIC_SHORTCUT_INSTALL_URL?.trim();
+const shortcutInstallUrl = configuredInstallUrl && /^https:\/\/www\.icloud\.com\/shortcuts\/[a-z0-9]+\/?$/i.test(configuredInstallUrl)
+  ? configuredInstallUrl
+  : null;
+
+const subscribeToLocation = () => () => {};
+const getBrowserUrl = () => window.location.origin;
+const getServerUrl = () => '';
+
 export function ShortcutsSettings() {
   const { showToast } = useToast();
   const [keys, setKeys] = useState<ShortcutKeyItem[]>([]);
@@ -42,9 +52,11 @@ export function ShortcutsSettings() {
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [keyName, setKeyName] = useState('iPhone Action Button');
   const [defaultAccountId, setDefaultAccountId] = useState<string>('default');
-  const [createdToken, setCreatedToken] = useState<string | null>(null);
-  const [copiedToken, setCopiedToken] = useState(false);
+  const [createdKey, setCreatedKey] = useState<{ id: number; token: string } | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const origin = useSyncExternalStore(subscribeToLocation, getBrowserUrl, getServerUrl);
+  const isLoopback = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?=[:/]|$)/i.test(origin);
+  const endpointUrl = origin && !isLoopback ? `${origin}${transactionPath}` : '';
 
   const loadData = async () => {
     const [keysRes, rulesRes, accRes] = await Promise.all([
@@ -88,12 +100,11 @@ export function ShortcutsSettings() {
           default_account_id: defaultAccountId !== 'default' ? Number(defaultAccountId) : null,
         }),
       });
-      const data = await response.json().catch(() => ({})) as { token?: string; error?: string };
-      if (!response.ok || !data.token) {
+      const data = await response.json().catch(() => ({})) as { id?: number; token?: string; error?: string };
+      if (!response.ok || typeof data.id !== 'number' || !data.token) {
         throw new Error(data.error || 'Không tạo được API key');
       }
-      setCreatedToken(data.token);
-      setCopiedToken(false);
+      setCreatedKey({ id: data.id, token: data.token });
       showToast('Đã tạo Apple Shortcuts Token', 'success');
       await loadData();
     } catch (error) {
@@ -108,6 +119,7 @@ export function ShortcutsSettings() {
     if (response.ok) {
       showToast('Đã thu hồi token', 'success');
       setKeys((current) => current.filter((item) => item.id !== id));
+      setCreatedKey((current) => current?.id === id ? null : current);
     } else {
       showToast('Không thể thu hồi token', 'error');
     }
@@ -124,16 +136,11 @@ export function ShortcutsSettings() {
   async function copyText(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      setCopiedToken(true);
       showToast('Đã sao chép vào bộ nhớ tạm', 'success');
     } catch {
-      showToast('Không thể sao chép tự động', 'error');
+      showToast('Hãy bôi đen giá trị và sao chép thủ công.', 'error');
     }
   }
-
-  const endpointUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/api/shortcuts/transactions`
-    : '/api/shortcuts/transactions';
 
   return (
     <div id="shortcuts" className="space-y-4">
@@ -141,10 +148,10 @@ export function ShortcutsSettings() {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <KeyRound className="size-4 text-[#00a970]" />
-            Apple Shortcuts API & Webhook
+            Ghi chi tiêu bằng Phím tắt iPhone
           </CardTitle>
           <CardDescription>
-            Tạo token riêng để ghi chi tiêu siêu tốc từ nút Action Button iPhone, Siri hoặc tự động hóa ngân hàng (SMS/Email → POST JSON).
+            Nói hoặc nhập “cà phê 35k” từ Siri hay nút Tác vụ để ghi vào ví đã chọn.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -178,23 +185,57 @@ export function ShortcutsSettings() {
             </Button>
           </form>
 
-          {createdToken ? (
+          {createdKey ? (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs">
-              <p className="font-semibold text-emerald-900">Token mới của bạn (chỉ hiển thị một lần):</p>
+              <p className="font-semibold text-emerald-900">Sao chép token mới trước khi rời trang. Token chỉ hiện một lần.</p>
               <div className="mt-2 flex items-center gap-2">
-                <code className="flex-1 break-all rounded-lg bg-white px-2.5 py-2 font-mono text-[11px] text-slate-800 border border-emerald-200">
-                  {createdToken}
+                <code className="flex-1 select-all break-all rounded-lg bg-white px-2.5 py-2 font-mono text-[11px] text-slate-800 border border-emerald-200">
+                  {createdKey.token}
                 </code>
-                <Button type="button" size="sm" variant="outline" onClick={() => void copyText(createdToken)} className="shrink-0">
-                  {copiedToken ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
-                  Copy
+                <Button type="button" size="sm" variant="outline" onClick={() => void copyText(createdKey.token)}>
+                  <Copy className="size-3.5" /> Sao chép
                 </Button>
               </div>
-              <p className="mt-2 text-emerald-800">
-                Endpoint: <code className="font-mono">POST {endpointUrl}</code> · Header <code className="font-mono">Authorization: Bearer &lt;token&gt;</code> · Body <code className="font-mono">{`{"text":"cà phê 35k"}`}</code>
-              </p>
             </div>
           ) : null}
+
+          <section aria-labelledby="shortcut-setup-title" className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-sm">
+            <h3 id="shortcut-setup-title" className="font-semibold text-slate-900">Cài trên iPhone</h3>
+            <p>Tạo token ở trên, rồi mở trang này bằng Safari trên iPhone để sao chép URL và cài Phím tắt. Nếu đã có token, dùng lại token đã lưu.</p>
+            {isLoopback ? (
+              <p className="rounded-lg bg-white p-2.5 text-slate-700">
+                Đang mở bằng <code>localhost</code>. Cho iPhone và máy chạy app vào cùng Wi-Fi, giữ server chạy và mở địa chỉ <strong>Network</strong> in trong terminal khi chạy <code>pnpm run dev</code>.
+              </p>
+            ) : endpointUrl ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="min-w-0 flex-1 select-all break-all text-xs">{endpointUrl}</code>
+                <Button type="button" size="sm" variant="outline" onClick={() => void copyText(endpointUrl)}>
+                  <Copy className="size-3.5" /> Sao chép URL
+                </Button>
+              </div>
+            ) : null}
+            {shortcutInstallUrl ? (
+              <p>Mở mẫu iCloud, bấm <strong>Thêm phím tắt</strong> rồi điền URL và token khi được hỏi.</p>
+            ) : null}
+            <a
+              href={shortcutInstallUrl ?? 'shortcuts://create-shortcut'}
+              className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-900 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              <ExternalLink className="size-4" aria-hidden />
+              {shortcutInstallUrl ? 'Cài phím tắt trên iPhone' : 'Mở trình tạo Phím tắt'}
+            </a>
+            <details open={shortcutInstallUrl ? undefined : true} className="space-y-2">
+              <summary className="cursor-pointer font-medium">Tạo phím tắt thủ công</summary>
+              <ol className="list-decimal space-y-2 pl-5">
+                <li>Trong trình tạo, đặt tên <strong>Ghi chi tiêu</strong> và thêm <strong>Đọc chính tả văn bản</strong> hoặc <strong>Hỏi đầu vào</strong> kiểu văn bản. Nếu mở ứng dụng Phím tắt thủ công, bấm <strong>+</strong> trước.</li>
+                <li>Thêm <strong>Lấy nội dung của URL</strong> (Get Contents of URL), dán URL ở trên, mở tùy chọn và chọn phương thức <code>POST</code>.</li>
+                <li>Trong <strong>Headers</strong>, thêm <code>Authorization</code> với giá trị <code>Bearer &lt;token&gt;</code>. Thay <code>&lt;token&gt;</code> bằng token đã sao chép, giữ dấu cách sau <code>Bearer</code>.</li>
+                <li>Trong <strong>Request Body</strong>, chọn <strong>JSON</strong>. Thêm trường văn bản <code>text</code> và dùng kết quả tác vụ đầu tiên làm giá trị.</li>
+              </ol>
+            </details>
+            <p>Chạy thử với “cà phê 35k”, chọn <strong>Cho phép</strong> khi iPhone hỏi quyền đọc chính tả hoặc kết nối tới app, rồi kiểm tra giao dịch.</p>
+            <p><strong>Gán nút Tác vụ</strong> · Vào <strong>Cài đặt → Nút tác vụ → Phím tắt → Ghi chi tiêu</strong>. Để dùng Siri, nói “Chạy Ghi chi tiêu”.</p>
+          </section>
 
           {keys.length > 0 ? (
             <div className="divide-y divide-slate-100 rounded-xl border border-slate-200">

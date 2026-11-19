@@ -45,6 +45,9 @@ cp .env.example .env
 | `GEMINI_API_KEY` | Có | API Key từ Google AI Studio |
 | `NEXTAUTH_URL` | Có | URL của ứng dụng (vd: http://localhost:8080) |
 | `NEXTAUTH_SECRET` | Có | Khóa bí mật cho NextAuth (tạo ngẫu nhiên) |
+| `NEXT_PUBLIC_SHORTCUT_INSTALL_URL` | Không | Link chia sẻ iCloud của mẫu “Ghi chi tiêu” để bật nút cài trên iPhone |
+
+Để bật cài qua iCloud, chia sẻ mẫu có hai câu hỏi khi nhập phím tắt là URL giao dịch và token. Mẫu gửi `POST` với header `Authorization: Bearer <token>` và JSON có trường `text` lấy từ tác vụ nhập liệu hoặc đọc chính tả. Để trống URL và token trong mẫu trước khi chia sẻ, rồi đặt link iCloud vào biến trên và build lại app.
 | `GOOGLE_CLIENT_ID` | Không | Client ID cho Google OAuth (tùy chọn) |
 | `GOOGLE_CLIENT_SECRET` | Không | Client Secret cho Google OAuth (tùy chọn) |
 
