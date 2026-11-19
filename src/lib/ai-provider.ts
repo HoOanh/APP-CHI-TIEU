@@ -156,23 +156,24 @@ export async function getActiveAiModel(userId: number) {
     }
   }
 
-  if (protocol === 'gemini') {
-    for (const fallbackModel of DEFAULT_GEMINI_FALLBACK_MODELS) {
+  if (protocol === 'gemini' && configuredModels.length === 0) {
+    for (const fallbackModel of DEFAULT_GEMINI_FALLBACK_MODELS.slice(0, 2)) {
       if (!configuredModels.includes(fallbackModel)) {
         configuredModels.push(fallbackModel);
       }
     }
   }
 
-  if (!configuredModels.length) return null;
+  const cappedModels = configuredModels.slice(0, 2);
+  if (!cappedModels.length) return null;
 
   return {
     providerId,
     protocol,
     baseUrl: String(firstRow.base_url),
     apiKey: decryptSecret(String(firstRow.secret_encrypted)),
-    modelId: configuredModels[0],
-    modelIds: configuredModels,
+    modelId: cappedModels[0],
+    modelIds: cappedModels,
   };
 }
 
@@ -189,9 +190,11 @@ export async function callConfiguredAi(
   await assertPublicProviderHost(config.baseUrl);
   const errors: string[] = [];
 
-  for (const modelId of config.modelIds) {
+  for (let index = 0; index < config.modelIds.length; index++) {
+    const modelId = config.modelIds[index];
+    const timeoutMs = index === 0 ? 12_000 : 10_000;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12_000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       if (config.protocol === 'gemini') {
         const parts: Array<Record<string, unknown>> = [{ text: prompt }, ...images.map((image) => ({
@@ -335,6 +338,55 @@ export async function discoverProviderModels(protocol: AiProtocol, baseUrl: stri
     if (!modelId || (protocol === 'gemini' && Array.isArray(entry.supportedGenerationMethods) && !entry.supportedGenerationMethods.includes('generateContent'))) return [];
     return [{ model_id: modelId, label: String(entry.displayName || entry.name || modelId) }];
   });
+}
+
+export async function transcribeWithConfiguredWhisper(
+  userId: number,
+  base64Data: string,
+  mimeType: string,
+): Promise<string | null> {
+  const config = await getActiveAiModel(userId);
+  if (!config || config.protocol !== 'openai_compatible') return null;
+
+  try {
+    await assertPublicProviderHost(config.baseUrl);
+    const cleanMime = mimeType.split(';')[0].trim() || 'audio/webm';
+    const ext = cleanMime.includes('mp4') || cleanMime.includes('m4a')
+      ? 'm4a'
+      : cleanMime.includes('mpeg') || cleanMime.includes('mp3')
+        ? 'mp3'
+        : cleanMime.includes('wav')
+          ? 'wav'
+          : 'webm';
+    const audioBytes = Buffer.from(base64Data, 'base64');
+    const form = new FormData();
+    form.append('file', new Blob([audioBytes], { type: cleanMime }), `voice.${ext}`);
+    form.append('model', config.baseUrl.includes('groq.com') ? 'whisper-large-v3-turbo' : 'whisper-1');
+    form.append('language', 'vi');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(`${config.baseUrl}/audio/transcriptions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.apiKey}` },
+        body: form,
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const payload: unknown = await response.json();
+      if (isRecord(payload) && typeof payload.text === 'string') {
+        return payload.text.trim();
+      }
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error: unknown) {
+    console.warn('[AI Provider] Whisper transcription failed, falling back:', error);
+    return null;
+  }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

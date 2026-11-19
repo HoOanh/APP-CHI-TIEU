@@ -1,6 +1,7 @@
 'use client';
 
-import { ArrowUpRight, Download, Monitor, PlusSquare, Smartphone } from 'lucide-react';
+import { ArrowUpRight, Download, KeyRound, Monitor, PlusSquare, Smartphone } from 'lucide-react';
+import Link from 'next/link';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 
@@ -45,6 +46,10 @@ export function QuickEntryAccess({ onChatPage = false }: { onChatPage?: boolean 
             Thêm vào Phím tắt Apple <ArrowUpRight className="size-4" aria-hidden />
           </a>
         )}
+        <Link href="/settings#shortcuts" className={buttonVariants({ variant: 'outline', className: 'w-full justify-between' })}>
+          <span className="flex items-center gap-2"><KeyRound className="size-4 text-emerald-700" aria-hidden /> Tạo Token Apple Shortcuts API</span>
+          <ArrowUpRight className="size-4" aria-hidden />
+        </Link>
       </DialogContent>
     </Dialog>
   );

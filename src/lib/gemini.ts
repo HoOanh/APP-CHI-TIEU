@@ -2,7 +2,8 @@ import { findChatTransactionDate } from './chat-transaction-text';
 import { GoogleGenAI, ThinkingLevel, type Part } from '@google/genai';
 import { getDb } from './db';
 import { decryptSecret } from './secrets';
-import { callConfiguredAi, type AiInputImage } from './ai-provider';
+import { callConfiguredAi, transcribeWithConfiguredWhisper, type AiInputImage } from './ai-provider';
+import { checkRateLimit } from './rate-limit';
 import { getVietnamToday } from './utils';
 
 export const DEFAULT_GEMINI_MODELS = [
@@ -17,7 +18,17 @@ const MODEL_PRIORITY = DEFAULT_GEMINI_MODELS.map((model) => model.id);
 
 const MODEL_TIMEOUT_MS = 12_000;
 
-async function getApiKeys(userId?: number): Promise<string[]> {
+export class AiRateLimitError extends Error {
+  status = 429;
+  retryAfterSeconds: number;
+
+  constructor(message: string, retryAfterSeconds: number) {
+    super(message);
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+async function getApiKeys(userId?: number): Promise<{ keys: string[]; usesServerKeyOnly: boolean }> {
   const keys: string[] = [];
 
   if (userId) {
@@ -34,6 +45,7 @@ async function getApiKeys(userId?: number): Promise<string[]> {
     }
   }
 
+  const hasUserKey = keys.length > 0;
   if (process.env.GEMINI_API_KEY && !keys.includes(process.env.GEMINI_API_KEY)) {
     keys.push(process.env.GEMINI_API_KEY);
   }
@@ -45,7 +57,7 @@ async function getApiKeys(userId?: number): Promise<string[]> {
     throw new Error('AI chưa được cấu hình. Vào Cài đặt để thêm provider, API key và model.');
   }
 
-  return keys;
+  return { keys, usesServerKeyOnly: !hasUserKey };
 }
 
 type ContentPart = string | Part;
@@ -91,21 +103,33 @@ async function callGeminiWithFallback(
     }
   }
 
-  const apiKeys = await getApiKeys(userId);
+  const { keys: apiKeys, usesServerKeyOnly } = await getApiKeys(userId);
+  if (userId && usesServerKeyOnly) {
+    const rate = checkRateLimit(`server-ai:${userId}`, 30, 60 * 60 * 1000);
+    if (!rate.allowed) {
+      throw new AiRateLimitError(
+        'Bạn đã dùng hết 30 lượt AI dùng chung trong giờ này. Hãy thêm API key riêng trong Cài đặt → AI Provider hoặc dùng cú pháp ghi nhanh.',
+        rate.retryAfterSeconds,
+      );
+    }
+  }
   const errors: string[] = [];
+  const modelsToTry = MODEL_PRIORITY.slice(0, 2);
 
   keyLoop: for (let keyIdx = 0; keyIdx < apiKeys.length; keyIdx++) {
     const apiKey = apiKeys[keyIdx];
     const genAI = new GoogleGenAI({ apiKey });
 
-    for (const modelName of MODEL_PRIORITY) {
+    for (let modelIdx = 0; modelIdx < modelsToTry.length; modelIdx++) {
+      const modelName = modelsToTry[modelIdx];
+      const timeoutMs = modelIdx === 0 ? MODEL_TIMEOUT_MS : 10_000;
       try {
         const response = await genAI.models.generateContent({
           model: modelName,
           contents: parts,
           config: {
             temperature: 0.1,
-            httpOptions: { timeout: MODEL_TIMEOUT_MS },
+            httpOptions: { timeout: timeoutMs },
             thinkingConfig: modelName.startsWith('gemini-3')
               ? { thinkingLevel: ThinkingLevel.MINIMAL }
               : { thinkingBudget: 0 },
@@ -423,20 +447,34 @@ export async function parseDebtPayment(
   message: string,
   debtNames: string[],
   userId?: number,
-): Promise<{ debt_name: string; amount: number }> {
-  const prompt = `Trích xuất thông tin trả nợ từ tin nhắn. Danh sách nợ: ${debtNames.join(', ')}.
+  images: TransactionImage[] = [],
+): Promise<{ debt_name: string; amount: number; payment_date?: string; note?: string }> {
+  const today = getVietnamToday();
+  const prompt = `Trích xuất thông tin trả nợ / thu nợ từ tin nhắn hoặc ảnh chuyển khoản/biên lai. Danh sách công nợ hiện có: ${debtNames.join(', ') || '(chưa có)'}.
 Trả về JSON:
-- debt_name: tên khoản nợ tương ứng nhất
-- amount: số tiền (số nguyên). "k" = x1000, "tr" = x1000000
-Tin nhắn: "${message}"
+- debt_name: tên khoản nợ tương ứng nhất trong danh sách (hoặc tên người/chủ nợ nếu phù hợp)
+- amount: số tiền nguyên dương (k = x1000, tr/triệu = x1000000)
+- payment_date: YYYY-MM-DD (hôm nay theo Asia/Ho_Chi_Minh là ${today})
+- note: ghi chú ngắn nếu có
+Tin nhắn: "${message || '(xem ảnh)'}"
 Chỉ trả về JSON hợp lệ.`;
 
-  const text = await callGeminiWithFallback([prompt], userId);
+  const parts: ContentPart[] = [
+    prompt,
+    ...images.map((image) => ({
+      inlineData: { data: image.base64Data, mimeType: image.mimeType },
+    })),
+  ];
+
+  const text = await callGeminiWithFallback(parts, userId);
   const parsed = parseJsonResponse(text);
+  const explicitDate = resolveMentionedDate(message);
 
   return {
     debt_name: (parsed.debt_name as string) || '',
     amount: Math.abs(Number(parsed.amount)) || 0,
+    payment_date: explicitDate || (isValidIsoDate(parsed.payment_date) ? parsed.payment_date : today),
+    note: typeof parsed.note === 'string' ? parsed.note.trim() : '',
   };
 }
 
@@ -446,6 +484,12 @@ export async function transcribeAudio(
   userId?: number,
 ): Promise<string> {
   const cleanMimeType = mimeType.split(';')[0].trim() || 'audio/webm';
+  if (userId) {
+    const whisperText = await transcribeWithConfiguredWhisper(userId, base64Data, cleanMimeType);
+    if (whisperText !== null) {
+      return whisperText;
+    }
+  }
   const prompt = `Nghe đoạn âm thanh tiếng Việt này và chép lại CHÍNH XÁC nội dung người dùng vừa nói (thường là ghi chép thu/chi tài chính như "ăn trưa 50k", "cà phê 35 nghìn", "nhận lương 15 triệu").
 Quy tắc bắt buộc:
 - Chỉ trả về đúng câu chữ tiếng Việt nghe được, ưu tiên viết số tiền gọn rõ (ví dụ: 50k, 100 nghìn, 15 triệu).

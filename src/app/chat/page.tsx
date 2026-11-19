@@ -7,6 +7,12 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: 'default', title: 'Ghi nhanh' },
 };
 
-export default function ChatPage() {
-  return <TransactionChat />;
+export default async function ChatPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ mode?: string }>;
+}) {
+  const params = await searchParams;
+  const initialMode = params?.mode === 'debt' ? 'debt' : 'auto';
+  return <TransactionChat initialMode={initialMode} />;
 }
