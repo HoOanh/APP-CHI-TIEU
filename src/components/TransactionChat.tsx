@@ -329,16 +329,24 @@ export function TransactionChat({
         showToast('Kết nối mạng để gửi ghi chú đã chỉnh sửa.', 'warning');
         return;
       }
-      if (files.length) {
-        showToast('Ảnh cần mạng để phân tích. Ghi chú chữ vẫn lưu được offline.', 'warning');
-        return;
-      }
       inFlight.current = true;
       setIsLoading(true);
       try {
-        await queueOfflineAiNote(text);
-        if (!voiceText) setInput((current) => current.trim() === text ? '' : current);
-        showToast('Đã lưu ghi chú trên thiết bị', 'success', 'Mở Chat và gửi ghi chú khi có mạng.');
+        await queueOfflineAiNote(text, {
+          files,
+          mode,
+          accountId: selectedAccountId || null,
+        });
+        if (!voiceText) {
+          setInput((current) => current.trim() === text ? '' : current);
+          setImageFiles([]);
+          setImagePreviews([]);
+        }
+        showToast(
+          files.length ? `Đã lưu nháp + ${files.length} ảnh offline` : 'Đã lưu ghi chú trên thiết bị',
+          'success',
+          'Tự động gửi & phân tích khi có mạng trở lại.',
+        );
       } catch {
         showToast('Không thể lưu ghi chú offline trên thiết bị này.', 'error');
       } finally {
@@ -485,9 +493,19 @@ export function TransactionChat({
           activeId={activeOfflineNoteId}
           isLoading={isLoading || listening}
           isOnline={typeof navigator !== 'undefined' && navigator.onLine}
-          onUse={(entry) => void submit({
-            id: entry.id, text: entry.message, files: [], previews: [], offlineNoteId: entry.id,
-          })}
+          onUse={(entry) => {
+            const restoredFiles = (entry.attachments ?? []).map(
+              (att) => new File([att.blob], att.name, { type: att.type }),
+            );
+            const previews = restoredFiles.map((file) => URL.createObjectURL(file));
+            void submit({
+              id: entry.id,
+              text: entry.message,
+              files: restoredFiles,
+              previews,
+              offlineNoteId: entry.id,
+            });
+          }}
           onDelete={async (entry) => { await removeOfflineQueueEntry(entry.id); setOfflineEntries(await listOfflineQueue()); }}
         />
         {messages.length === 0 ? (
@@ -632,8 +650,11 @@ function OfflineNotesPanel({ entries, activeId, isLoading, isOnline, onUse, onDe
       </div>
       <div className="mt-2 space-y-2">
         {entries.map((entry) => {
+          const attachmentBadge = entry.kind === 'ai_note' && entry.attachments?.length
+            ? ` (+${entry.attachments.length} ảnh)`
+            : '';
           const label = entry.kind === 'ai_note'
-            ? entry.message
+            ? `${entry.message || 'Biên lai ảnh'}${attachmentBadge}`
             : `${entry.values.description} · ${formatCurrency(entry.values.amount)} · ${entry.values.expense_date}`;
           return (
             <div key={entry.id} className="flex items-center gap-2 rounded-xl bg-white p-2.5">

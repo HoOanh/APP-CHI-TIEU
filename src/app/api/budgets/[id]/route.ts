@@ -28,6 +28,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const frequencyPeriod = typeof body.frequency_period === 'string' && VALID_FREQUENCY_PERIODS.has(body.frequency_period)
       ? body.frequency_period
       : '';
+    const rolloverEnabled = body.rollover_enabled === true || Number(body.rollover_enabled) === 1 ? 1 : 0;
+    const rolloverMode = body.rollover_mode === 'all' ? 'all' : 'positive_only';
 
     if (!Number.isInteger(categoryId) || categoryId <= 0 || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !Number.isFinite(amount) || amount <= 0 || (basis === 'daily' && (!Number.isInteger(days) || days < 1 || days > getDaysInMonth(month) || dailyAmount <= 0))) {
       return NextResponse.json({ error: 'Kiểm tra danh mục, tháng, số tiền và số ngày.' }, { status: 400 });
@@ -38,9 +40,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     await db.execute({
       sql: `UPDATE budget_jars
             SET category_id = ?, month = ?, budget_amount = ?, budget_basis = ?, daily_amount = ?,
-                budget_days = ?, warning_percent = ?, daily_limit = ?, frequency_limit = ?, frequency_period = ?
+                budget_days = ?, warning_percent = ?, daily_limit = ?, frequency_limit = ?, frequency_period = ?,
+                rollover_enabled = ?, rollover_mode = ?
             WHERE id = ? AND user_id = ?`,
-      args: [categoryId, month, amount, basis, basis === 'daily' ? dailyAmount : 0, basis === 'daily' ? days : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod, id, user.id],
+      args: [categoryId, month, amount, basis, basis === 'daily' ? dailyAmount : 0, basis === 'daily' ? days : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod, rolloverEnabled, rolloverMode, id, user.id],
     });
     
     const updated = await db.execute({ sql: 'SELECT * FROM budget_jars WHERE id = ? AND user_id = ?', args: [id, user.id] });

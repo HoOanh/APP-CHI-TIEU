@@ -21,7 +21,7 @@ export async function getBudgetAlert({
 }): Promise<BudgetAlert | null> {
   const month = expenseDate.slice(0, 7);
   const result = await db.execute({
-    sql: `SELECT b.budget_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit,
+    sql: `SELECT b.budget_amount, b.rollover_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit,
                  c.name AS category_name,
                  COALESCE(SUM(e.amount), 0) AS spent_amount,
                  COALESCE(SUM(CASE WHEN e.expense_date = ? THEN e.amount ELSE 0 END), 0) AS day_spent
@@ -32,13 +32,13 @@ export async function getBudgetAlert({
             AND e.type = 'expense'
             AND strftime('%Y-%m', e.expense_date) = b.month
           WHERE b.user_id = ? AND b.category_id = ? AND b.month = ?
-          GROUP BY b.id, b.budget_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit, c.name`,
+          GROUP BY b.id, b.budget_amount, b.rollover_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit, c.name`,
     args: [expenseDate, userId, categoryId, month],
   });
   const budget = result.rows[0];
   if (!budget) return null;
 
-  const limit = Number(budget.budget_amount) || 0;
+  const limit = Math.max(0, (Number(budget.budget_amount) || 0) + (Number(budget.rollover_amount) || 0));
   const spent = Number(budget.spent_amount) || 0;
   const daySpent = Number(budget.day_spent) || 0;
   const spentBeforeThisTransaction = Math.max(0, spent - addedAmount);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { computeSafeToSpend, evaluateBudgetJar } from '@/lib/budget-evaluator';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
 import { getUserLedgerContext } from '@/lib/ledger-context';
@@ -65,18 +66,21 @@ export async function GET(request: NextRequest) {
         args: [ctx.ledgerId, user.id],
       },
       {
-        sql: `SELECT b.id, b.budget_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit,
+        sql: `SELECT b.id, b.month, b.budget_amount, b.rollover_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit,
+                      b.frequency_limit, b.frequency_period,
                       c.name AS category_name, c.color AS category_color,
                       COALESCE(SUM(e.amount), 0) AS spent_amount,
-                      COALESCE(SUM(CASE WHEN e.expense_date = ? THEN e.amount ELSE 0 END), 0) AS today_spent
+                      COALESCE(SUM(CASE WHEN e.expense_date = ? THEN e.amount ELSE 0 END), 0) AS today_spent,
+                      COUNT(CASE WHEN e.expense_date = ? THEN 1 END) AS today_count,
+                      COUNT(*) AS month_count
               FROM budget_jars b
               LEFT JOIN categories c ON c.id = b.category_id
               LEFT JOIN expenses e ON e.user_id = b.user_id AND e.category_id = b.category_id
                 AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?
               WHERE b.user_id = ? AND b.month = ?
-              GROUP BY b.id, b.budget_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit, c.name, c.color
+              GROUP BY b.id, b.month, b.budget_amount, b.rollover_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit, b.frequency_limit, b.frequency_period, c.name, c.color
               ORDER BY spent_amount DESC`,
-        args: [today, start, end, user.id, month],
+        args: [today, today, start, end, user.id, month],
       },
       {
         sql: `SELECT c.id, c.name, c.color, COALESCE(SUM(e.amount), 0) AS spent_amount
@@ -112,71 +116,56 @@ export async function GET(request: NextRequest) {
     const walletBalance = initialSum + (Number(row?.tx_net) || 0);
     const expense = Number(row?.expense) || 0;
     const days = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
-    const isCurrentMonth = month === today.slice(0, 7);
-    const daysLeft = isCurrentMonth ? Math.max(1, days - Number(today.slice(8, 10)) + 1) : 0;
 
-    const attentionBudgets = alertsResult.rows.reduce<Array<{
-      id: string;
-      budget_amount: number;
-      warning_percent: number;
-      category_name: string;
-      category_color: string;
-      spent_amount: number;
-      today_spent: number;
-      daily_limit: number;
-      alert_type: 'monthly' | 'daily';
-      alert_severity: 'warning' | 'danger';
-      alert_message: string;
-    }>>((items, budget) => {
-      const budgetAmount = Number(budget.budget_amount) || 0;
-      const spentAmount = Number(budget.spent_amount) || 0;
-      const todaySpent = Number(budget.today_spent) || 0;
-      const warningPercent = Number(budget.warning_percent) || 80;
-      const effectiveDailyLimit = Number(budget.daily_limit) > 0
-        ? Number(budget.daily_limit)
-        : budget.budget_basis === 'daily'
-          ? Number(budget.daily_amount) || 0
-          : 0;
-      const percentage = budgetAmount > 0 ? (spentAmount / budgetAmount) * 100 : 0;
-
-      const isMonthlyOver = percentage >= 100;
-      const isMonthlyWarning = percentage >= warningPercent && !isMonthlyOver;
-      const isDailyOver = isCurrentMonth && effectiveDailyLimit > 0 && todaySpent > effectiveDailyLimit;
-      const isDailyWarning = isCurrentMonth && effectiveDailyLimit > 0 && todaySpent >= effectiveDailyLimit * 0.8 && !isDailyOver;
-
-      if (!isMonthlyOver && !isMonthlyWarning && !isDailyOver && !isDailyWarning) return items;
-
-      const isDanger = isMonthlyOver || isDailyOver;
-      const remaining = budgetAmount - spentAmount;
-
-      let alertMessage = '';
-      if (isMonthlyOver) {
-        alertMessage = `🚨 Vượt ngân sách tháng ${formatMoney(Math.abs(remaining))} (${formatMoney(spentAmount)}/${formatMoney(budgetAmount)}). Dừng chi hũ này!`;
-      } else if (isDailyOver) {
-        alertMessage = `🚨 Chi lố hạn mức ngày hôm nay: Đã chi ${formatMoney(todaySpent)} / ${formatMoney(effectiveDailyLimit)} (lố ${formatMoney(todaySpent - effectiveDailyLimit)})!`;
-      } else if (isDailyWarning) {
-        alertMessage = `⚠️ Hôm nay đã chi ${formatMoney(todaySpent)} / ${formatMoney(effectiveDailyLimit)} (còn ${formatMoney(Math.max(0, effectiveDailyLimit - todaySpent))} trong ngày).`;
-      } else {
-        alertMessage = daysLeft
-          ? `Còn ${formatMoney(remaining)} · nên chi tối đa ${formatMoney(remaining / daysLeft)}/ngày.`
-          : `Còn ${formatMoney(remaining)} trước khi chạm trần.`;
-      }
-
-      items.push({
+    const evaluatedBudgets = alertsResult.rows.map((budget) => {
+      const jarInput = {
         id: String(budget.id),
-        budget_amount: budgetAmount,
-        warning_percent: warningPercent,
         category_name: String(budget.category_name),
-        category_color: String(budget.category_color),
-        spent_amount: spentAmount,
-        today_spent: todaySpent,
-        daily_limit: effectiveDailyLimit,
-        alert_type: isDailyOver || (!isMonthlyOver && isDailyWarning) ? 'daily' : 'monthly',
-        alert_severity: isDanger ? 'danger' : 'warning',
-        alert_message: alertMessage,
-      });
-      return items;
-    }, [])
+        month: String(budget.month || month),
+        budget_amount: Number(budget.budget_amount) || 0,
+        rollover_amount: Number(budget.rollover_amount) || 0,
+        budget_basis: String(budget.budget_basis || 'monthly'),
+        daily_amount: Number(budget.daily_amount) || 0,
+        daily_limit: Number(budget.daily_limit) || 0,
+        warning_percent: Number(budget.warning_percent) || 80,
+        frequency_limit: Number(budget.frequency_limit) || 0,
+        frequency_period: String(budget.frequency_period || ''),
+        spent_amount: Number(budget.spent_amount) || 0,
+        today_spent: Number(budget.today_spent) || 0,
+        today_count: Number(budget.today_count) || 0,
+        month_count: Number(budget.month_count) || 0,
+      };
+      return {
+        raw: budget,
+        jarInput,
+        evaluated: evaluateBudgetJar(jarInput, today),
+      };
+    });
+
+    const safeToSpend = computeSafeToSpend(
+      evaluatedBudgets.map((item) => item.jarInput),
+      month,
+      today,
+    );
+
+    const attentionBudgets = evaluatedBudgets
+      .flatMap((item) => {
+        const alert = item.evaluated.highestAlert;
+        if (!alert) return [];
+        return [{
+          id: String(item.raw.id),
+          budget_amount: item.evaluated.effectiveBudget,
+          warning_percent: Number(item.raw.warning_percent) || 80,
+          category_name: String(item.raw.category_name),
+          category_color: String(item.raw.category_color),
+          spent_amount: item.jarInput.spent_amount,
+          today_spent: item.jarInput.today_spent,
+          daily_limit: item.evaluated.effectiveDailyLimit,
+          alert_type: (alert.type === 'daily_limit' ? 'daily' : 'monthly') as 'monthly' | 'daily',
+          alert_severity: alert.severity,
+          alert_message: alert.message,
+        }];
+      })
       .sort((left, right) => (left.alert_severity === right.alert_severity ? Number(right.spent_amount) - Number(left.spent_amount) : left.alert_severity === 'danger' ? -1 : 1))
       .slice(0, 6);
 
@@ -199,6 +188,7 @@ export async function GET(request: NextRequest) {
         dailyAverage: Math.round(expense / days),
         transactionCount: Number(row?.transaction_count) || 0,
       },
+      safeToSpend,
       accounts,
       modules: ctx.modules,
       recent: recentResult.rows,
@@ -219,8 +209,4 @@ export async function GET(request: NextRequest) {
     console.error('[dashboard]', error);
     return NextResponse.json({ error: 'Failed to fetch dashboard' }, { status: 500 });
   }
-}
-
-function formatMoney(value: number): string {
-  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value) + 'đ';
 }

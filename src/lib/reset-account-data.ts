@@ -2,6 +2,8 @@ import type { Client } from '@libsql/client';
 
 const ACCOUNT_DATA_TABLES = [
   'expense_chat_requests',
+  'recurring_occurrences',
+  'recurring_rules',
   'shortcut_keys',
   'merchant_rules',
   'debt_payments',

@@ -233,6 +233,15 @@ export default function ExpensesPage() {
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <MonthPicker month={month} onChange={setMonth} />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-xl border-slate-200 bg-white text-xs"
+              onClick={() => window.open(`/api/export?format=csv&month=${month}`, '_blank')}
+            >
+              Xuất CSV
+            </Button>
             <ManualTransactionDialog compact onSaved={() => void fetchExpenses()} />
           </div>
         </div>

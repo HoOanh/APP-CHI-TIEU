@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { generateWeeklyInsight, getLatestWeeklyInsight } from '@/lib/insights';
+import { processRecurringReminderPushes } from '@/lib/reminders-worker';
 import { sendPushToUser } from '@/lib/web-push';
 
 export const runtime = 'nodejs';
@@ -192,5 +193,10 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, timezone: TIMEZONE, checked: result.rows.length, ...counts });
+  const recurring = await processRecurringReminderPushes(db, sendPushToUser).catch((error) => {
+    console.error('[recurring-cron]', error);
+    return { checked: 0, sent: 0, failed: 0 };
+  });
+
+  return NextResponse.json({ ok: true, timezone: TIMEZONE, checked: result.rows.length, ...counts, recurring });
 }

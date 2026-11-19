@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client';
 
 export const UNCLASSIFIED_EXPENSE = 'Chưa phân loại';
-const SCHEMA_VERSION = '2026-11-v2.0-s3';
+const SCHEMA_VERSION = '2026-11-v2.0-s4';
 
 export async function initializeDatabase(db: Client) {
   await db.execute('PRAGMA foreign_keys = ON').catch(() => {});
@@ -323,6 +323,45 @@ export async function initializeDatabase(db: Client) {
       FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
       FOREIGN KEY (default_account_id) REFERENCES accounts(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS recurring_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      amount REAL NOT NULL,
+      type TEXT NOT NULL DEFAULT 'expense',
+      category_id INTEGER,
+      account_id INTEGER,
+      debt_id INTEGER,
+      cadence TEXT NOT NULL DEFAULT 'monthly',
+      day_of_month INTEGER NOT NULL DEFAULT 1,
+      day_of_week INTEGER NOT NULL DEFAULT 1,
+      next_due_date TEXT NOT NULL,
+      remind_days_before INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL,
+      FOREIGN KEY (debt_id) REFERENCES debts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS recurring_occurrences (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      due_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      expense_id INTEGER,
+      notified_at TEXT,
+      resolved_at TEXT,
+      FOREIGN KEY (rule_id) REFERENCES recurring_rules(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE SET NULL,
+      UNIQUE(rule_id, due_date)
+    );
   `);
 
   await migrateLegacyTables(db);
@@ -380,6 +419,10 @@ export async function initializeDatabase(db: Client) {
       ON shortcut_keys(key_hash);
     CREATE INDEX IF NOT EXISTS idx_shortcut_user
       ON shortcut_keys(user_id, revoked_at);
+    CREATE INDEX IF NOT EXISTS idx_recurring_due
+      ON recurring_rules(enabled, next_due_date);
+    CREATE INDEX IF NOT EXISTS idx_recurring_occ_user
+      ON recurring_occurrences(user_id, status, due_date);
   `);
 
   // Insert default categories: [name, icon, color, kind, budget_group]

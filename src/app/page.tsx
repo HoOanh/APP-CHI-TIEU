@@ -14,9 +14,11 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { CategoryIcon } from '@/components/CategoryIcon';
+import { PendingRecurringBanner } from '@/components/PendingRecurringBanner';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { WeeklyInsightCard, type Insight } from '@/components/WeeklyInsightCard';
+import type { SafeToSpendSummary } from '@/lib/budget-evaluator';
 import type { EnabledModules } from '@/lib/modules';
 import {
   cn,
@@ -71,6 +73,7 @@ interface Dashboard {
 
 interface DashboardResponse {
   summary: Dashboard;
+  safeToSpend?: SafeToSpendSummary;
   accounts?: DashboardAccount[];
   modules?: EnabledModules;
   recent: Transaction[];
@@ -191,6 +194,24 @@ export default function DashboardPage() {
         <span className="h-3 w-px shrink-0 bg-slate-200" />
         <span className="min-w-0 truncate">TB chi: <strong className="font-semibold text-slate-700">{summary ? formatCurrency(summary.dailyAverage) : '—'}</strong>/ngày</span>
       </div>
+
+      {data?.safeToSpend && data.safeToSpend.activeJarsCount > 0 ? (
+        <section className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/50 px-4 py-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+              Hạn mức chi an toàn hôm nay (Safe-to-Spend)
+            </p>
+            <p className="mt-0.5 text-xs text-slate-600">
+              Còn {formatCurrency(data.safeToSpend.totalBudgetRemaining)} trong {data.safeToSpend.activeJarsCount} hũ · cho {data.safeToSpend.daysLeft} ngày còn lại
+            </p>
+          </div>
+          <p className="text-xl font-bold tabular-nums text-[#00a970]">
+            {formatCurrency(data.safeToSpend.dailySafeToSpend)}<span className="text-xs font-medium text-slate-500">/ngày</span>
+          </p>
+        </section>
+      ) : null}
+
+      <PendingRecurringBanner onResolved={() => void mutate()} />
 
       {attentionBudgets && attentionBudgets.some((item) => item.alert_severity === 'danger') ? (
         <section

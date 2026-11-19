@@ -17,7 +17,20 @@ const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((modul
 
 interface CategoryPoint { category_name: string; category_color: string; total: number; count: number; }
 interface DatePoint { date: string; total: number; }
-interface StatsResponse { total: number; count: number; daily_average: number; by_category: CategoryPoint[]; by_date: DatePoint[]; previous_total: number; comparison_label: string; }
+interface StatsResponse {
+  total: number;
+  income_total?: number;
+  net_savings?: number;
+  saving_rate_percent?: number;
+  liquid_balance?: number;
+  runway_months?: number | null;
+  count: number;
+  daily_average: number;
+  by_category: CategoryPoint[];
+  by_date: DatePoint[];
+  previous_total: number;
+  comparison_label: string;
+}
 type Period = 'daily' | 'monthly' | 'quarterly' | 'yearly';
 
 export default function StatsPage() {
@@ -55,6 +68,27 @@ export default function StatsPage() {
           </section>
 
           <section className="grid grid-cols-2 divide-x divide-slate-200 rounded-2xl border border-slate-200 bg-white py-3"><Metric icon={ReceiptText} label="Trung bình" value={formatCurrency(data.daily_average)} suffix={period === 'daily' ? '/ ngày' : '/ kỳ'} /><Metric icon={WalletCards} label="Danh mục nhiều nhất" value={topCategory?.category_name || 'Chưa có'} suffix={topCategory ? formatCurrency(topCategory.total) : ''} className="pl-4" /></section>
+
+          <section className="grid grid-cols-2 gap-3 lg:col-span-2 sm:grid-cols-3">
+            <Insight
+              title="Tổng thu kỳ này"
+              value={`+${formatCurrency(data.income_total ?? 0)}`}
+              detail={`Tiết kiệm ròng: ${(data.net_savings ?? 0) >= 0 ? '+' : '−'}${formatCurrency(Math.abs(data.net_savings ?? 0))}`}
+              tone="mint"
+            />
+            <Insight
+              title="Tỷ lệ tiết kiệm (Saving Rate)"
+              value={`${data.saving_rate_percent ?? 0}%`}
+              detail={(data.income_total ?? 0) > 0 ? 'Phần trăm thu nhập giữ lại' : 'Chưa có giao dịch thu kỳ này'}
+              tone={(data.saving_rate_percent ?? 0) >= 20 ? 'mint' : 'rose'}
+            />
+            <Insight
+              title="Runway dự phòng"
+              value={data.runway_months !== null && data.runway_months !== undefined ? `${data.runway_months} tháng` : '—'}
+              detail={data.liquid_balance !== undefined ? `Số dư hiện có: ${formatCurrency(data.liquid_balance)}` : 'Dựa trên mức chi hiện tại'}
+              tone="mint"
+            />
+          </section>
 
           {data.total > 0 ? <>
             <div className="lg:col-span-2"><StatsCharts byDate={data.by_date} period={period} total={data.total} /></div>
