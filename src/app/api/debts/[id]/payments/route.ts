@@ -21,7 +21,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     const db = await getDb();
-    const payments = await db.execute({ sql: 'SELECT * FROM debt_payments WHERE debt_id = ? AND user_id = ? ORDER BY payment_date DESC', args: [id, user.id] });
+    const payments = await db.execute({ sql: 'SELECT * FROM debt_payments WHERE debt_id = ? AND user_id = ? ORDER BY payment_date DESC, id DESC', args: [id, user.id] });
     return NextResponse.json(payments.rows);
   } catch (error) {
     console.error(error);

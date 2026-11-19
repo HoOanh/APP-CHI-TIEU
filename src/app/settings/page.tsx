@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   Database,
   Download,
+  KeyRound,
   LayoutList,
   Plus,
   ReceiptText,
@@ -19,6 +20,14 @@ import {
   X,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -60,6 +69,7 @@ interface ProfileResponse {
   email: string;
   image: string;
   isDevelopmentUser: boolean;
+  hasPassword?: boolean;
 }
 
 interface SpendingSummary {
@@ -91,6 +101,11 @@ export default function SettingsPage() {
   const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
   const [resetConfirmation, setResetConfirmation] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [dataRevision, setDataRevision] = useState(0);
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState({
@@ -264,6 +279,43 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleUpdatePassword(event: React.FormEvent) {
+    event.preventDefault();
+    if (newPassword.length < 10) {
+      showToast('Mật khẩu mới cần ít nhất 10 ký tự', 'error');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      showToast('Xác nhận mật khẩu chưa khớp', 'error');
+      return;
+    }
+    setIsUpdatingPassword(true);
+    try {
+      const response = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(profile?.hasPassword ? { currentPassword } : {}),
+          newPassword,
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string; hasPassword?: boolean };
+      if (!response.ok) {
+        throw new Error(data.error || 'Không thể cập nhật mật khẩu.');
+      }
+      setProfile((current) => current ? { ...current, hasPassword: Boolean(data.hasPassword ?? true) } : current);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setIsPasswordDialogOpen(false);
+      showToast(profile?.hasPassword ? 'Đã đổi mật khẩu' : 'Đã tạo mật khẩu đăng nhập', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Không thể cập nhật mật khẩu', 'error');
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  }
+
   return (
     <div className="mx-auto min-h-screen max-w-7xl space-y-6 bg-background p-4 pb-nav md:px-8 md:py-7">
       <header className="flex items-center gap-3 pt-2">
@@ -304,9 +356,15 @@ export default function SettingsPage() {
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{profile?.email || '—'}</p>
           </div>
           {!profile?.isDevelopmentUser && (
-            <Button variant="outline" size="sm" className="rounded-xl text-destructive hover:bg-rose-50 hover:text-destructive" onClick={() => signOut({ callbackUrl: '/login' })}>
-              Đăng xuất
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setIsPasswordDialogOpen(true)}>
+                <KeyRound className="size-3.5" />
+                <span className="hidden sm:inline">{profile?.hasPassword ? 'Đổi mật khẩu' : 'Tạo mật khẩu'}</span>
+              </Button>
+              <Button variant="outline" size="sm" className="rounded-xl text-destructive hover:bg-rose-50 hover:text-destructive" onClick={() => signOut({ callbackUrl: '/login' })}>
+                Đăng xuất
+              </Button>
+            </div>
           )}
         </div>
         <div id="thong-ke" className="grid grid-cols-3 md:hidden divide-x border-t border-slate-100 bg-slate-50/70">
@@ -316,6 +374,57 @@ export default function SettingsPage() {
         </div>
         <Link href="/stats" className="hidden border-t border-slate-100 px-5 py-3 text-sm font-medium text-emerald-800 hover:bg-slate-50 md:block">Xem thống kê chi tiêu →</Link>
       </section>
+
+      <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>{profile?.hasPassword ? 'Đổi mật khẩu' : 'Tạo mật khẩu đăng nhập'}</DialogTitle>
+            <DialogDescription>
+              {profile?.hasPassword
+                ? 'Nhập mật khẩu hiện tại và mật khẩu mới (tối thiểu 10 ký tự).'
+                : 'Tạo mật khẩu để có thể đăng nhập bằng Email ngoài Google.'}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleUpdatePassword}>
+            {profile?.hasPassword ? (
+              <div className="space-y-2">
+                <Label htmlFor="settings-current-password">Mật khẩu hiện tại</Label>
+                <Input
+                  id="settings-current-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                />
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <Label htmlFor="settings-new-password">Mật khẩu mới</Label>
+              <Input
+                id="settings-new-password"
+                type="password"
+                autoComplete="new-password"
+                placeholder="Ít nhất 10 ký tự"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="settings-confirm-password">Nhập lại mật khẩu mới</Label>
+              <Input
+                id="settings-confirm-password"
+                type="password"
+                autoComplete="new-password"
+                value={confirmNewPassword}
+                onChange={(event) => setConfirmNewPassword(event.target.value)}
+              />
+            </div>
+            <Button type="submit" disabled={isUpdatingPassword} className="h-11 w-full rounded-xl font-semibold">
+              {isUpdatingPassword ? 'Đang lưu…' : 'Lưu mật khẩu'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <section className="space-y-5 md:hidden">
         <div className="flex items-center justify-between gap-3">

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   formatCurrency,
   formatDate,
+  formatShortDate,
   getMonthLabel,
   getPercentage,
   getQuarter,
@@ -13,8 +14,10 @@ test('formats Vietnamese currency without losing precision to decimals', () => {
   assert.equal(formatCurrency(Number.NaN), '0đ');
 });
 
-test('formats dates and reporting labels consistently', () => {
+test('formats dates and reporting labels consistently without timezone shift', () => {
   assert.equal(formatDate('2026-07-29T00:00:00.000Z'), '29/07/2026');
+  assert.equal(formatDate('2026-11-19'), '19/11/2026');
+  assert.equal(formatShortDate('2026-11-01'), '01/11');
   assert.equal(getMonthLabel('2026-07'), 'Tháng 7/2026');
   assert.equal(getQuarter('2026-07'), 3);
 });

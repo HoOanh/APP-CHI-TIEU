@@ -22,6 +22,6 @@ export async function POST(_request: Request, context: RouteContext) {
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Không thể kết nối provider.';
-    return NextResponse.json({ error: message });
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

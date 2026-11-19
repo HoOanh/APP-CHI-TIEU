@@ -7,6 +7,7 @@ export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublicRoute =
     pathname.startsWith('/login')
+    || pathname.startsWith('/reset-password')
     || pathname.startsWith('/api/auth')
     || pathname === '/api/cron/pwa-reminders';
 
@@ -14,7 +15,11 @@ export default async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (!isGoogleAuthConfigured() && process.env.NODE_ENV !== 'production') {
+  if (
+    !isGoogleAuthConfigured()
+    && process.env.NODE_ENV !== 'production'
+    && process.env.ALLOW_LOCAL_DEV_BYPASS !== 'false'
+  ) {
     return NextResponse.next();
   }
 

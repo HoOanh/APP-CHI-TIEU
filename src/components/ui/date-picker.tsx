@@ -52,7 +52,7 @@ export function DatePicker({ id, value, onChange, label, placeholder = "Chọn n
         setOpen(nextOpen)
       }}>
         <PopoverPrimitive.Trigger asChild>
-          <button id={id} type="button" disabled={disabled} aria-label={label || "Chọn ngày"} aria-invalid={invalid || undefined} className={cn("flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-input bg-white px-3 text-left text-base text-foreground shadow-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-3 aria-[invalid=true]:ring-destructive/20 md:text-sm", className)}>
+          <button id={id} type="button" disabled={disabled} aria-label={label || "Chọn ngày"} data-invalid={invalid || undefined} className={cn("flex h-11 w-full min-w-0 items-center justify-between gap-2 rounded-xl border border-input bg-white px-3 text-left text-base text-foreground shadow-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[invalid=true]:border-destructive data-[invalid=true]:ring-3 data-[invalid=true]:ring-destructive/20 md:text-sm", className)}>
             <span className={cn("truncate", !value && "text-muted-foreground")}>{formattedValue}</span>
             <CalendarDays aria-hidden className="size-4 shrink-0 text-slate-500" />
           </button>

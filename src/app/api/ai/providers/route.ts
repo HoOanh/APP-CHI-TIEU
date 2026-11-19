@@ -6,7 +6,6 @@ import {
   getProviderPresets,
   getUserProviders,
   normalizeProviderUrl,
-  type AiProtocol,
 } from '@/lib/ai-provider';
 
 export async function GET() {

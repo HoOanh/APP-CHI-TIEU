@@ -16,15 +16,16 @@ export async function GET(request: NextRequest) {
     const db = await getDb();
 
     const today = getVietnamToday();
-    const todayDate = new Date(today);
-    const dayOfWeek = todayDate.getDay();
+    const [todayYear, todayMonth, todayDay] = today.split('-').map(Number);
+    const todayDate = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay));
+    const dayOfWeek = todayDate.getUTCDay();
     const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     const weekStart = new Date(todayDate);
-    weekStart.setDate(todayDate.getDate() + mondayOffset);
+    weekStart.setUTCDate(todayDate.getUTCDate() + mondayOffset);
     const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    const weekStartStr = weekStart.toISOString().split('T')[0];
-    const weekEndStr = weekEnd.toISOString().split('T')[0];
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    const weekStartStr = weekStart.toISOString().slice(0, 10);
+    const weekEndStr = weekEnd.toISOString().slice(0, 10);
 
     const result = await db.execute({
       sql: `SELECT b.*, c.name AS category_name, c.icon AS category_icon,
@@ -85,7 +86,7 @@ export async function GET(request: NextRequest) {
       const percentage = budgetAmount > 0 ? (spentAmount / budgetAmount) * 100 : 0;
       const isCurrentMonth = String(budget.month) === today.slice(0, 7);
       const daysLeft = isCurrentMonth
-        ? Math.max(1, new Date(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0).getDate() - todayDate.getDate() + 1)
+        ? Math.max(1, new Date(Date.UTC(todayYear, todayMonth, 0)).getUTCDate() - todayDay + 1)
         : 0;
 
       if (percentage >= 100) {
@@ -200,7 +201,7 @@ export async function POST(request: NextRequest) {
     }
     const db = await getDb();
     const category = await db.execute({
-      sql: "SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?) AND name <> 'Thu nhập'",
+      sql: "SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?) AND kind <> 'income'",
       args: [categoryId, user.id],
     });
     if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục chi tiêu không hợp lệ.' }, { status: 400 });

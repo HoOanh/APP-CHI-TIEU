@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/useToast";
 import { formatCurrency, getPercentage, cn, getVietnamToday } from "@/lib/utils";
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -48,11 +48,11 @@ export default function DebtsPage() {
 
   // Add Debt Form State
   const [isAddOpen, setIsAddOpen] = useState(false);
-  const { register, handleSubmit, setValue, watch, reset, formState: { errors, isSubmitting } } = useForm<DebtFormValues>({
+  const { register, handleSubmit, setValue, control, reset, formState: { errors, isSubmitting } } = useForm<DebtFormValues>({
     resolver: zodResolver(debtSchema),
     defaultValues: { name: '', creditor: '', total_amount: '', start_date: getVietnamToday(), due_date: '', interest_rate: '', note: '' },
   });
-  const debtForm = watch();
+  const debtForm = useWatch({ control });
 
   const fetchDebts = async () => {
     setIsLoading(true);
@@ -69,8 +69,25 @@ export default function DebtsPage() {
   };
 
   useEffect(() => {
-    // Initial remote data synchronization.
-    fetchDebts();
+    let active = true;
+    fetch('/api/debts')
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Failed to fetch debts');
+        return res.json() as Promise<Debt[]>;
+      })
+      .then((data) => {
+        if (active) {
+          setDebts(data);
+          setLoadError(false);
+        }
+      })
+      .catch(() => {
+        if (active) setLoadError(true);
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   const handleAddDebt = async (values: DebtFormValues) => {
@@ -257,7 +274,7 @@ export default function DebtsPage() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="total_amount">Tổng số tiền</Label>
-                  <Input id="total_amount" type="text" inputMode="numeric" className="tabular-nums" placeholder="100.000" aria-invalid={Boolean(errors.total_amount)} value={debtForm.total_amount} onChange={(event) => setValue('total_amount', event.target.value.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.'), { shouldValidate: true })} />
+                  <Input id="total_amount" type="text" inputMode="numeric" className="tabular-nums" placeholder="100.000" aria-invalid={Boolean(errors.total_amount)} value={debtForm.total_amount ?? ''} onChange={(event) => setValue('total_amount', event.target.value.replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.'), { shouldValidate: true })} />
                   {errors.total_amount ? <FieldError message={errors.total_amount.message} /> : null}
                 </div>
                 <div className="space-y-2">
@@ -267,11 +284,11 @@ export default function DebtsPage() {
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <DatePicker id="start_date" label="Ngày bắt đầu" value={debtForm.start_date} onChange={(value) => setValue('start_date', value, { shouldValidate: true })} invalid={Boolean(errors.start_date)} />
+                  <DatePicker id="start_date" label="Ngày bắt đầu" value={debtForm.start_date ?? getVietnamToday()} onChange={(value) => setValue('start_date', value, { shouldValidate: true })} invalid={Boolean(errors.start_date)} />
                   {errors.start_date ? <FieldError message={errors.start_date.message} /> : null}
                 </div>
                 <div className="space-y-2">
-                  <DatePicker id="due_date" label="Hạn trả" value={debtForm.due_date} min={debtForm.start_date} onChange={(value) => setValue('due_date', value, { shouldValidate: true })} invalid={Boolean(errors.due_date)} />
+                  <DatePicker id="due_date" label="Hạn trả" value={debtForm.due_date ?? ''} min={debtForm.start_date ?? getVietnamToday()} onChange={(value) => setValue('due_date', value, { shouldValidate: true })} invalid={Boolean(errors.due_date)} />
                   {errors.due_date ? <FieldError message={errors.due_date.message} /> : null}
                 </div>
               </div>

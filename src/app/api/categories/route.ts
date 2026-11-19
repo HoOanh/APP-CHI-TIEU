@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
+
+const createCategorySchema = z.object({
+  name: z.string().trim().min(1, 'Tên danh mục là bắt buộc').max(60, 'Tên danh mục tối đa 60 ký tự'),
+  icon: z.string().trim().max(40).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  kind: z.enum(['expense', 'income', 'both']).optional(),
+});
 
 export async function GET() {
   try {
@@ -31,30 +39,43 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body: unknown = await request.json();
-    if (!body || typeof body !== 'object') {
-      return NextResponse.json({ error: 'Dữ liệu không hợp lệ' }, { status: 400 });
+    const rawBody: unknown = await request.json().catch(() => null);
+    const parsed = createCategorySchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues[0]?.message || 'Dữ liệu danh mục không hợp lệ' }, { status: 400 });
     }
 
-    const { name, icon, color } = body as Record<string, unknown>;
-    const normalizedName = typeof name === 'string' ? name.trim() : '';
-    if (!normalizedName) return NextResponse.json({ error: 'Tên danh mục là bắt buộc' }, { status: 400 });
-    const normalizedIcon = typeof icon === 'string' && icon.trim() ? icon.trim() : 'category';
-    const normalizedColor = typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#64748b';
+    const normalizedName = parsed.data.name;
+    const normalizedIcon = parsed.data.icon && parsed.data.icon.length > 0 ? parsed.data.icon : 'category';
+    const normalizedColor = parsed.data.color ?? '#64748b';
+    const normalizedKind = parsed.data.kind ?? 'expense';
     
     const db = await getDb();
+    const existing = await db.execute({
+      sql: `SELECT id FROM categories
+            WHERE (user_id IS NULL OR user_id = ?) AND lower(name) = lower(?)
+            LIMIT 1`,
+      args: [user.id, normalizedName],
+    });
+    if (existing.rows[0]) {
+      return NextResponse.json({ error: 'Tên danh mục đã tồn tại' }, { status: 409 });
+    }
+
     const result = await db.execute({
-      sql: 'INSERT INTO categories (user_id, name, icon, color) VALUES (?, ?, ?, ?)',
-      args: [user.id, normalizedName, normalizedIcon, normalizedColor]
+      sql: 'INSERT INTO categories (user_id, name, icon, color, kind) VALUES (?, ?, ?, ?, ?)',
+      args: [user.id, normalizedName, normalizedIcon, normalizedColor, normalizedKind]
     });
     
     const newCategory = await db.execute({
-      sql: 'SELECT * FROM categories WHERE id = ? AND user_id = ?',
+      sql: 'SELECT *, user_id IS NULL as is_system FROM categories WHERE id = ? AND user_id = ?',
       args: [result.lastInsertRowid!, user.id]
     });
     
     return NextResponse.json(newCategory.rows[0], { status: 201 });
   } catch (error) {
+    if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
+      return NextResponse.json({ error: 'Tên danh mục đã tồn tại' }, { status: 409 });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to create category' }, { status: 500 });
   }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { CirclePlus, LoaderCircle, PenLine } from 'lucide-react';
@@ -21,6 +21,7 @@ interface CategoryOption {
   id: string | number;
   name: string;
   color: string;
+  kind?: 'expense' | 'income' | 'both';
 }
 
 interface TransactionSaveResult {
@@ -72,9 +73,14 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
     resolver: zodResolver(transactionSchema),
     defaultValues: { type: 'expense', amount: '', description: '', category_id: '', expense_date: getVietnamToday(), note: '' },
   });
-  const type = form.watch('type');
-  const categoryId = form.watch('category_id');
-  const availableCategories = categories.filter((category) => type === 'income' ? category.name === 'Thu nhập' : category.name !== 'Thu nhập');
+  const type = useWatch({ control: form.control, name: 'type' });
+  const categoryId = useWatch({ control: form.control, name: 'category_id' });
+  const availableCategories = categories.filter((category) => {
+    const kind = category.kind ?? (category.name === 'Thu nhập' ? 'income' : 'expense');
+    return type === 'income'
+      ? (kind === 'income' || kind === 'both' || category.name === 'Thu nhập')
+      : (kind === 'expense' || kind === 'both');
+  });
   const activeCategoryId = availableCategories.some((category) => String(category.id) === categoryId) ? categoryId : String(availableCategories[0]?.id || '');
 
   useEffect(() => {

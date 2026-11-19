@@ -59,7 +59,7 @@ export function AppShell({ children, user }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { showToast } = useToast();
-  const isPublicRoute = pathname.startsWith('/login');
+  const isPublicRoute = pathname.startsWith('/login') || pathname.startsWith('/reset-password');
   const isChatRoute = pathname === '/chat' || pathname === '/debt-chat';
 
   useEffect(() => {

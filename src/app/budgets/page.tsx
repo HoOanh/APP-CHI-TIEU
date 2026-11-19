@@ -42,7 +42,7 @@ import {
 import { MonthPicker } from '@/components/MonthPicker';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { useToast } from '@/hooks/useToast';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import * as CollapsiblePrimitive from 'radix-ui/collapsible';
@@ -159,7 +159,18 @@ export default function BudgetsPage() {
     frequency_period: '',
     },
   });
-  const formData = budgetForm.watch();
+  const watchedForm = useWatch({ control: budgetForm.control });
+  const formData: BudgetFormValues = {
+    category_id: watchedForm.category_id ?? '',
+    budget_amount: watchedForm.budget_amount ?? '',
+    budget_basis: watchedForm.budget_basis ?? 'monthly',
+    daily_amount: watchedForm.daily_amount ?? '',
+    budget_days: watchedForm.budget_days ?? String(getDaysInMonth(getCurrentMonth())),
+    warning_percent: watchedForm.warning_percent ?? '80',
+    daily_limit: watchedForm.daily_limit ?? '',
+    frequency_limit: watchedForm.frequency_limit ?? '',
+    frequency_period: watchedForm.frequency_period ?? '',
+  };
   const setFormData = (updater: (previous: BudgetFormValues) => BudgetFormValues) => {
     const next = updater(budgetForm.getValues());
     for (const key of Object.keys(next) as (keyof BudgetFormValues)[]) budgetForm.setValue(key, next[key], { shouldValidate: true, shouldDirty: true });
@@ -200,28 +211,48 @@ export default function BudgetsPage() {
     }
   }, [month]);
 
-  const fetchCategories = useCallback(async () => {
-    try {
-      const res = await fetch('/api/categories');
-      if (res.ok) {
-        const data = await res.json();
-        setCategories(data);
-      }
-    } catch (error) {
-      console.error('Error fetching categories:', error);
-    }
-  }, []);
-
   useEffect(() => {
-    void fetchBudgets();
-    return () => activeRequest.current?.abort();
-  }, [fetchBudgets]);
+    let active = true;
+    const controller = new AbortController();
+    activeRequest.current?.abort();
+    activeRequest.current = controller;
+
+    fetch(`/api/budgets?month=${month}`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Failed to load budgets');
+        return res.json() as Promise<Budget[]>;
+      })
+      .then((data) => {
+        if (active) {
+          setBudgets(data);
+          setLoadError(false);
+        }
+      })
+      .catch(() => {
+        if (active && !controller.signal.aborted) setLoadError(true);
+      })
+      .finally(() => {
+        if (active && !controller.signal.aborted) setIsLoading(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [month]);
 
   useEffect(() => onTransactionsChanged(() => void fetchBudgets()), [fetchBudgets]);
 
   useEffect(() => {
-    void fetchCategories();
-  }, [fetchCategories]);
+    let active = true;
+    fetch('/api/categories')
+      .then(async (res) => (res.ok ? (await res.json() as Category[]) : null))
+      .then((data) => {
+        if (active && data) setCategories(data);
+      })
+      .catch((error) => console.error('Error fetching categories:', error));
+    return () => { active = false; };
+  }, []);
 
   const { totalBudget, totalSpent, overallPercentage, remaining } =
     useMemo(() => {
@@ -747,7 +778,9 @@ export default function BudgetsPage() {
             </DialogDescription>
           </DialogHeader>
           <form
-            onSubmit={budgetForm.handleSubmit(handleSubmit)}
+            onSubmit={(event) => {
+              void budgetForm.handleSubmit(handleSubmit)(event);
+            }}
             noValidate
             className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]"
           >
