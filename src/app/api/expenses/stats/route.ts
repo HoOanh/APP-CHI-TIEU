@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
+import { normalizeTagName } from '@/lib/tags';
 import { getCurrentMonth, getVietnamToday } from '@/lib/utils';
 
 type Period = 'daily' | 'monthly' | 'quarterly' | 'yearly';
@@ -60,37 +62,52 @@ export async function GET(request: NextRequest) {
     const period = (request.nextUrl.searchParams.get('period') || 'daily') as Period;
     const month = request.nextUrl.searchParams.get('month') || getCurrentMonth();
     const year = request.nextUrl.searchParams.get('year') || getVietnamToday().slice(0, 4);
+    const rawTag = request.nextUrl.searchParams.get('tag')?.trim() || '';
+    const activeTag = rawTag && rawTag !== 'all' ? normalizeTagName(rawTag) : '';
     const range = getRange(period, month, year);
     const db = await getDb();
-    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    const ctx = await ensureUserLedgerAndAccount(db, user.id);
+    const { ledgerId } = ctx;
+    await assertLedgerAccess(db, user.id, ledgerId, 'viewer');
 
-    const baseArgs = [ledgerId, user.id, range.start, range.end];
-    const scopeSql = '(ledger_id = ? OR (ledger_id IS NULL AND user_id = ?))';
+    const tagSql = activeTag
+      ? ` AND EXISTS (
+            SELECT 1 FROM expense_tags et
+            JOIN tags t ON t.id = et.tag_id
+            WHERE et.expense_id = e.id AND t.ledger_id = ? AND t.name = ?
+          )`
+      : '';
+    const tagArgs: Array<string | number> = activeTag ? [ledgerId, activeTag] : [];
+    const baseArgs: Array<string | number> = [ledgerId, user.id, range.start, range.end, ...tagArgs];
+    const scopeSql = '(e.ledger_id = ? OR (e.ledger_id IS NULL AND e.user_id = ?))';
 
     const dateQuery = period === 'daily'
-      ? `SELECT expense_date AS date, SUM(amount) AS total FROM expenses WHERE ${scopeSql} AND type = 'expense' AND expense_date >= ? AND expense_date < ? GROUP BY expense_date ORDER BY expense_date`
+      ? `SELECT e.expense_date AS date, SUM(e.amount) AS total FROM expenses e WHERE ${scopeSql} AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?${tagSql} GROUP BY e.expense_date ORDER BY e.expense_date`
       : period === 'monthly'
-        ? `SELECT strftime('%Y-%m', expense_date) AS date, SUM(amount) AS total FROM expenses WHERE ${scopeSql} AND type = 'expense' AND expense_date >= ? AND expense_date < ? GROUP BY date ORDER BY date`
+        ? `SELECT strftime('%Y-%m', e.expense_date) AS date, SUM(e.amount) AS total FROM expenses e WHERE ${scopeSql} AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?${tagSql} GROUP BY date ORDER BY date`
         : period === 'quarterly'
-          ? `SELECT 'Q' || CAST((CAST(strftime('%m', expense_date) AS INTEGER) + 2) / 3 AS INTEGER) AS date, SUM(amount) AS total FROM expenses WHERE ${scopeSql} AND type = 'expense' AND expense_date >= ? AND expense_date < ? GROUP BY date ORDER BY date`
-          : `SELECT strftime('%Y', expense_date) AS date, SUM(amount) AS total FROM expenses WHERE ${scopeSql} AND type = 'expense' AND expense_date >= ? AND expense_date < ? GROUP BY date ORDER BY date`;
+          ? `SELECT 'Q' || CAST((CAST(strftime('%m', e.expense_date) AS INTEGER) + 2) / 3 AS INTEGER) AS date, SUM(e.amount) AS total FROM expenses e WHERE ${scopeSql} AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?${tagSql} GROUP BY date ORDER BY date`
+          : `SELECT strftime('%Y', e.expense_date) AS date, SUM(e.amount) AS total FROM expenses e WHERE ${scopeSql} AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?${tagSql} GROUP BY date ORDER BY date`;
 
-    const [totalResult, categoryResult, byDateResult, previousResult, balancesResult] = await Promise.all([
+    const [totalResult, categoryResult, byDateResult, previousResult, balancesResult, tagBreakdownResult] = await Promise.all([
       db.execute({
         sql: `SELECT
-                COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS total,
-                COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income_total,
-                COUNT(CASE WHEN type = 'expense' THEN 1 END) AS count
-              FROM expenses
-              WHERE ${scopeSql} AND expense_date >= ? AND expense_date < ?`,
+                COALESCE(SUM(CASE WHEN e.type = 'expense' THEN e.amount ELSE 0 END), 0) AS total,
+                COALESCE(SUM(CASE WHEN e.type = 'income' THEN e.amount ELSE 0 END), 0) AS income_total,
+                COUNT(CASE WHEN e.type = 'expense' THEN 1 END) AS count,
+                COALESCE(SUM(CASE WHEN COALESCE(e.reimburse_status, 'none') = 'pending' THEN e.amount ELSE 0 END), 0) AS pending_reimburse_total,
+                COUNT(CASE WHEN COALESCE(e.reimburse_status, 'none') = 'pending' THEN 1 END) AS pending_reimburse_count,
+                COALESCE(SUM(CASE WHEN COALESCE(e.reimburse_status, 'none') = 'settled' THEN e.amount ELSE 0 END), 0) AS settled_reimburse_total
+              FROM expenses e
+              WHERE ${scopeSql} AND e.expense_date >= ? AND e.expense_date < ?${tagSql}`,
         args: baseArgs,
       }),
       db.execute({
         sql: `SELECT c.name AS category_name, c.color AS category_color, SUM(e.amount) AS total, COUNT(*) AS count
               FROM expenses e
               JOIN categories c ON c.id = e.category_id
-              WHERE (e.ledger_id = ? OR (e.ledger_id IS NULL AND e.user_id = ?))
-                AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?
+              WHERE ${scopeSql}
+                AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?${tagSql}
               GROUP BY c.id, c.name, c.color
               ORDER BY total DESC LIMIT 8`,
         args: baseArgs,
@@ -98,18 +115,32 @@ export async function GET(request: NextRequest) {
       db.execute({ sql: dateQuery, args: baseArgs }),
       range.comparisonStart && range.comparisonEnd
         ? db.execute({
-            sql: `SELECT COALESCE(SUM(amount), 0) AS total
-                  FROM expenses
-                  WHERE ${scopeSql} AND type = 'expense' AND expense_date >= ? AND expense_date < ?`,
-            args: [ledgerId, user.id, range.comparisonStart, range.comparisonEnd],
+            sql: `SELECT COALESCE(SUM(e.amount), 0) AS total
+                  FROM expenses e
+                  WHERE ${scopeSql} AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?${tagSql}`,
+            args: [ledgerId, user.id, range.comparisonStart, range.comparisonEnd, ...tagArgs],
           })
         : Promise.resolve(null),
       db.execute({
         sql: `SELECT
                 COALESCE((SELECT SUM(initial_balance) FROM accounts WHERE ledger_id = ? AND archived = 0), 0)
-                + COALESCE((SELECT SUM(CASE WHEN type = 'income' THEN amount WHEN type = 'expense' THEN -amount ELSE 0 END)
-                            FROM expenses WHERE ${scopeSql}), 0) AS net_worth`,
+                + COALESCE((SELECT SUM(CASE WHEN e.type = 'income' THEN e.amount WHEN e.type = 'expense' THEN -e.amount ELSE 0 END)
+                            FROM expenses e WHERE ${scopeSql}), 0) AS net_worth`,
         args: [ledgerId, ledgerId, user.id],
+      }),
+      db.execute({
+        sql: `SELECT t.id AS tag_id, t.name AS tag_name, t.color AS tag_color,
+                     COALESCE(SUM(CASE WHEN e.type = 'income' THEN e.amount ELSE 0 END), 0) AS income,
+                     COALESCE(SUM(CASE WHEN e.type = 'expense' THEN e.amount ELSE 0 END), 0) AS expense,
+                     COUNT(e.id) AS count
+              FROM tags t
+              LEFT JOIN expense_tags et ON et.tag_id = t.id
+              LEFT JOIN expenses e ON e.id = et.expense_id AND e.expense_date >= ? AND e.expense_date < ?
+              WHERE t.ledger_id = ?
+              GROUP BY t.id, t.name, t.color
+              HAVING count > 0 OR COALESCE(income, 0) > 0 OR COALESCE(expense, 0) > 0
+              ORDER BY (income + expense) DESC, t.name ASC`,
+        args: [range.start, range.end, ledgerId],
       }),
     ]);
 
@@ -133,6 +164,23 @@ export async function GET(request: NextRequest) {
       ? new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate()
       : byDate.length || 1;
 
+    const marginPercent = incomeTotal > 0
+      ? Math.round((netSavings / incomeTotal) * 1000) / 10
+      : null;
+    const byTag = tagBreakdownResult.rows.map((row) => {
+      const inc = Number(row.income) || 0;
+      const exp = Number(row.expense) || 0;
+      return {
+        tag_id: Number(row.tag_id),
+        tag_name: String(row.tag_name),
+        tag_color: String(row.tag_color || '#64748b'),
+        income: inc,
+        expense: exp,
+        net: inc - exp,
+        count: Number(row.count) || 0,
+      };
+    });
+
     return NextResponse.json(
       {
         total,
@@ -141,6 +189,20 @@ export async function GET(request: NextRequest) {
         saving_rate_percent: savingRatePercent,
         liquid_balance: liquidBalance,
         runway_months: runwayMonths,
+        ledgerKind: ctx.ledgerKind,
+        ledgerName: ctx.ledgerName,
+        tagsEnabled: Boolean(user.modules.tags_and_reimburse || ctx.ledgerKind === 'business'),
+        activeTag: activeTag || null,
+        pnl: {
+          revenue: incomeTotal,
+          operating_expense: total,
+          gross_profit: netSavings,
+          margin_percent: marginPercent,
+          pending_reimburse_total: Number(totalResult.rows[0]?.pending_reimburse_total) || 0,
+          pending_reimburse_count: Number(totalResult.rows[0]?.pending_reimburse_count) || 0,
+          settled_reimburse_total: Number(totalResult.rows[0]?.settled_reimburse_total) || 0,
+          by_tag: byTag,
+        },
         count: Number(totalResult.rows[0]?.count) || 0,
         daily_average: Math.round(total / days),
         by_category: categoryResult.rows,
@@ -151,6 +213,9 @@ export async function GET(request: NextRequest) {
       { headers: { 'Cache-Control': 'private, no-store' } },
     );
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[expense-stats]', error);
     return NextResponse.json({ error: 'Failed to get stats' }, { status: 500 });
   }

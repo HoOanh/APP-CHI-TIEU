@@ -42,6 +42,8 @@ interface TransactionSaveResult {
   expense_date: string;
   note: string | null;
   type: 'income' | 'expense' | 'transfer';
+  reimburse_status?: 'none' | 'pending' | 'settled';
+  tags?: Array<{ id?: number; name: string; color?: string }>;
 }
 
 interface ManualTransactionDialogProps {
@@ -58,6 +60,8 @@ interface ManualTransactionDialogProps {
     date: string;
     note: string | null;
     type: 'income' | 'expense' | 'transfer';
+    reimburse_status?: 'none' | 'pending' | 'settled';
+    tags?: Array<{ id?: number; name: string; color?: string }>;
   };
 }
 
@@ -69,6 +73,8 @@ const transactionSchema = z.object({
   account_id: z.string(),
   to_account_id: z.string(),
   expense_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Chọn ngày giao dịch.'),
+  reimburse_status: z.enum(['none', 'pending', 'settled']),
+  tagsText: z.string().max(120, 'Tags tối đa 120 ký tự.'),
   note: z.string().max(500, 'Ghi chú tối đa 500 ký tự.'),
 }).superRefine((values, context) => {
   if (values.type === 'transfer') {
@@ -104,6 +110,8 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       account_id: '',
       to_account_id: '',
       expense_date: getVietnamToday(),
+      reimburse_status: 'none',
+      tagsText: '',
       note: '',
     },
   });
@@ -111,6 +119,7 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
   const categoryId = useWatch({ control: form.control, name: 'category_id' });
   const accountId = useWatch({ control: form.control, name: 'account_id' });
   const toAccountId = useWatch({ control: form.control, name: 'to_account_id' });
+  const reimburseStatus = useWatch({ control: form.control, name: 'reimburse_status' });
 
   const availableCategories = categories.filter((category) => {
     const kind = category.kind ?? (category.name === 'Thu nhập' ? 'income' : 'expense');
@@ -135,6 +144,8 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       account_id: transaction.account_id ? String(transaction.account_id) : '',
       to_account_id: transaction.to_account_id ? String(transaction.to_account_id) : '',
       expense_date: transaction.date.split('T')[0] || getVietnamToday(),
+      reimburse_status: transaction.reimburse_status ?? 'none',
+      tagsText: (transaction.tags ?? []).map((t) => `#${t.name}`).join(' '),
       note: transaction.note || '',
     } : {
       type: 'expense',
@@ -144,6 +155,8 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       account_id: '',
       to_account_id: '',
       expense_date: getVietnamToday(),
+      reimburse_status: 'none',
+      tagsText: '',
       note: '',
     });
 
@@ -192,11 +205,17 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       account_id: defaultAcc ? String(defaultAcc.id) : '',
       to_account_id: secondAcc ? String(secondAcc.id) : '',
       expense_date: getVietnamToday(),
+      reimburse_status: 'none',
+      tagsText: '',
       note: '',
     });
   }
 
   async function saveTransaction(values: TransactionFormValues) {
+    const parsedTags = values.tagsText
+      .split(/[\s,;]+/)
+      .map((t) => t.replace(/^#+/, '').trim())
+      .filter(Boolean);
     const transactionValues = {
       amount: parseMoneyInput(values.amount),
       description: values.description.trim(),
@@ -204,6 +223,8 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       account_id: values.account_id ? Number(values.account_id) : undefined,
       to_account_id: values.type === 'transfer' && values.to_account_id ? Number(values.to_account_id) : undefined,
       expense_date: values.expense_date,
+      reimburse_status: values.type === 'transfer' ? 'none' : values.reimburse_status,
+      tags: parsedTags,
       note: values.note.trim(),
       type: values.type,
     };
@@ -402,6 +423,34 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
                 ) : null}
 
                 <Controller control={form.control} name="expense_date" render={({ field, fieldState }) => <DatePicker id="manual-date" label="Ngày giao dịch" value={field.value} onChange={field.onChange} invalid={Boolean(fieldState.error)} />} />
+
+                {type !== 'transfer' ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="manual-tags">#Tags <span className="font-normal text-slate-500">(cách nhau bởi dấu cách)</span></Label>
+                      <Input id="manual-tags" maxLength={120} placeholder="Ví dụ: #du-an #khach-hang" {...form.register('tagsText')} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="manual-reimburse">Hoàn ứng</Label>
+                      <Controller
+                        control={form.control}
+                        name="reimburse_status"
+                        render={({ field }) => (
+                          <Select value={reimburseStatus} onValueChange={field.onChange}>
+                            <SelectTrigger id="manual-reimburse" aria-label="Trạng thái hoàn ứng">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">Không hoàn ứng</SelectItem>
+                              <SelectItem value="pending">Chờ hoàn ứng</SelectItem>
+                              <SelectItem value="settled">Đã hoàn ứng</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </div>
+                  </>
+                ) : null}
 
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="manual-note">Ghi chú <span className="font-normal text-slate-500">(không bắt buộc)</span></Label>

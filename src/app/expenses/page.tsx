@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { MonthPicker } from '@/components/MonthPicker';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowRightLeft, LoaderCircle, ReceiptText, Search, Trash2, Wallet } from 'lucide-react';
+import { ArrowRightLeft, Hash, LoaderCircle, ReceiptText, Search, Trash2, Wallet } from 'lucide-react';
 import { cn, formatCurrency, formatShortDate, getCurrentMonth } from '@/lib/utils';
 import { useToast } from '@/hooks/useToast';
 import { ManualTransactionDialog } from '@/components/ManualTransactionDialog';
@@ -15,6 +15,7 @@ import { onTransactionsChanged } from '@/lib/transaction-events';
 
 interface Category { id: string; name: string; color: string; }
 interface AccountOption { id: number; name: string; }
+interface TagItem { id: number; name: string; color: string; }
 interface Expense {
   id: string;
   amount: number;
@@ -27,6 +28,8 @@ interface Expense {
   account_name: string | null;
   to_account_name: string | null;
   created_by_name: string | null;
+  reimburse_status: 'none' | 'pending' | 'settled';
+  tags: TagItem[];
   type: 'income' | 'expense' | 'transfer';
 }
 
@@ -39,6 +42,20 @@ interface LedgerBadgeInfo {
 }
 
 function mapExpenseRow(item: Record<string, unknown>): Expense {
+  const rawTags = Array.isArray(item.tags) ? item.tags : [];
+  const tags: TagItem[] = rawTags.flatMap((t) => {
+    if (!t || typeof t !== 'object') return [];
+    const rec = t as Record<string, unknown>;
+    return [{
+      id: Number(rec.id) || 0,
+      name: String(rec.name || ''),
+      color: String(rec.color || '#64748b'),
+    }];
+  });
+  const reimburseRaw = item.reimburse_status;
+  const reimburse_status: 'none' | 'pending' | 'settled' =
+    reimburseRaw === 'pending' || reimburseRaw === 'settled' ? reimburseRaw : 'none';
+
   return {
     id: String(item.id),
     amount: Number(item.amount) || 0,
@@ -51,6 +68,8 @@ function mapExpenseRow(item: Record<string, unknown>): Expense {
     account_name: item.account_name ? String(item.account_name) : null,
     to_account_name: item.to_account_name ? String(item.to_account_name) : null,
     created_by_name: item.created_by_name ? String(item.created_by_name) : null,
+    reimburse_status,
+    tags,
     category: {
       id: String(item.category_id || ''),
       name: String(item.category_name || 'Khác'),
@@ -81,6 +100,9 @@ export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [availableTags, setAvailableTags] = useState<TagItem[]>([]);
+  const [activeTag, setActiveTag] = useState('all');
+  const [activeReimburse, setActiveReimburse] = useState<'all' | 'pending' | 'settled'>('all');
   const [totalAmount, setTotalAmount] = useState(0);
   const [totalIncome, setTotalIncome] = useState(0);
   const [totalExpense, setTotalExpense] = useState(0);
@@ -96,10 +118,20 @@ export default function ExpensesPage() {
     if (activeCategoryId !== 'all') params.set('category_id', activeCategoryId);
     if (activeType !== 'all') params.set('type', activeType);
     if (activeAccountId !== 'all') params.set('account_id', activeAccountId);
+    if (activeTag !== 'all') params.set('tag', activeTag);
+    if (activeReimburse !== 'all') params.set('reimburse_status', activeReimburse);
     if (activeSearch) params.set('search', activeSearch);
     if (cursor) params.set('cursor', cursor);
     return params;
-  }, [activeAccountId, activeCategoryId, activeSearch, activeType, month]);
+  }, [activeAccountId, activeCategoryId, activeReimburse, activeSearch, activeTag, activeType, month]);
+
+  const refreshTags = useCallback(async () => {
+    const res = await fetch('/api/tags').catch(() => null);
+    if (res?.ok) {
+      const json = await res.json() as { tags?: TagItem[] };
+      setAvailableTags(json.tags ?? []);
+    }
+  }, []);
 
   const fetchExpenses = useCallback(async () => {
     activeRequest.current?.abort();
@@ -154,11 +186,15 @@ export default function ExpensesPage() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([fetch('/api/categories'), fetch('/api/accounts')])
-      .then(async ([catRes, accRes]) => {
+    Promise.all([fetch('/api/categories'), fetch('/api/accounts'), fetch('/api/tags')])
+      .then(async ([catRes, accRes, tagRes]) => {
         if (!active) return;
         if (catRes.ok) setCategories(await catRes.json() as Category[]);
         if (accRes.ok) setAccounts(await accRes.json() as AccountOption[]);
+        if (tagRes.ok) {
+          const json = await tagRes.json() as { tags?: TagItem[] };
+          setAvailableTags(json.tags ?? []);
+        }
       })
       .catch(console.error);
     return () => { active = false; };
@@ -241,6 +277,23 @@ export default function ExpensesPage() {
   const isViewer = ledgerInfo?.role === 'viewer';
   const showCreatorBadge = Boolean(ledgerInfo?.isShared);
 
+  const toggleReimburseStatus = async (expense: Expense) => {
+    if (isViewer || expense.type === 'transfer') return;
+    const nextStatus: 'pending' | 'settled' = expense.reimburse_status === 'pending' ? 'settled' : 'pending';
+    try {
+      const res = await fetch(`/api/expenses/${expense.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reimburse_status: nextStatus }),
+      });
+      if (!res.ok) throw new Error('Không thể cập nhật trạng thái hoàn ứng.');
+      setExpenses((current) => current.map((item) => item.id === expense.id ? { ...item, reimburse_status: nextStatus } : item));
+      showToast(nextStatus === 'settled' ? 'Đã đánh dấu hoàn ứng' : 'Đã chuyển sang chờ hoàn ứng', 'success');
+    } catch {
+      showToast('Không thể cập nhật hoàn ứng', 'error');
+    }
+  };
+
   return (
     <div className="mx-auto min-h-screen w-full max-w-7xl bg-[#f7f9fb] pb-nav">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
@@ -265,7 +318,7 @@ export default function ExpensesPage() {
                 Chỉ xem
               </span>
             ) : (
-              <ManualTransactionDialog compact onSaved={() => void fetchExpenses()} />
+              <ManualTransactionDialog compact onSaved={() => { void fetchExpenses(); void refreshTags(); }} />
             )}
           </div>
         </div>
@@ -308,6 +361,20 @@ export default function ExpensesPage() {
               </SelectContent>
             </Select>
           ) : null}
+          {availableTags.length > 0 || activeTag !== 'all' ? (
+            <Select value={activeTag} onValueChange={setActiveTag}>
+              <SelectTrigger aria-label="Lọc theo tag" className="h-9 rounded-xl bg-white sm:w-44">
+                <Hash className="mr-1.5 size-3.5 text-slate-500" />
+                <SelectValue placeholder="Mọi #tag" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Mọi #tag</SelectItem>
+                {availableTags.map((tag) => (
+                  <SelectItem key={tag.id} value={tag.name}>#{tag.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
         </div>
 
         <div className="relative mt-2.5">
@@ -318,6 +385,12 @@ export default function ExpensesPage() {
             {accounts.length > 1 ? (
               <FilterChip active={activeType === 'transfer'} label="Chuyển ví" onClick={() => setActiveType('transfer')} />
             ) : null}
+            <FilterChip
+              active={activeReimburse === 'pending'}
+              label="Chờ hoàn ứng"
+              color="#f59e0b"
+              onClick={() => setActiveReimburse((curr) => curr === 'pending' ? 'all' : 'pending')}
+            />
             <span className="my-1 w-px shrink-0 bg-slate-200" />
             <FilterChip active={activeCategoryId === 'all'} label="Mọi danh mục" onClick={() => setActiveCategoryId('all')} />
             {categories.map((category) => (
@@ -331,9 +404,9 @@ export default function ExpensesPage() {
       <main className="space-y-5 px-4 py-5 md:px-8 md:py-7">
         {isLoading ? <div className="space-y-3">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-slate-200/70" />)}</div> : null}
         {!isLoading && loadError ? <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-white p-4"><p className="text-sm text-rose-800">Không tải được danh sách giao dịch.</p><Button variant="outline" onClick={() => void fetchExpenses()}>Thử lại</Button></div> : null}
-        {!isLoading && !loadError && dates.length === 0 ? (activeSearch || activeType !== 'all' || activeAccountId !== 'all' ? <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Không tìm thấy giao dịch phù hợp bộ lọc.</p> : <EmptyTransactions />) : null}
+        {!isLoading && !loadError && dates.length === 0 ? (activeSearch || activeType !== 'all' || activeAccountId !== 'all' || activeTag !== 'all' || activeReimburse !== 'all' ? <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Không tìm thấy giao dịch phù hợp bộ lọc.</p> : <EmptyTransactions />) : null}
         {!isLoading && !loadError && dates.length > 0 ? <>
-          <div className="space-y-5 xl:hidden">{dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} isViewer={isViewer} showCreatorBadge={showCreatorBadge} onDelete={setPendingDeleteId} onSaved={() => void fetchExpenses()} />)}</div>
+          <div className="space-y-5 xl:hidden">{dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} isViewer={isViewer} showCreatorBadge={showCreatorBadge} onDelete={setPendingDeleteId} onToggleReimburse={(exp) => void toggleReimburseStatus(exp)} onSaved={() => { void fetchExpenses(); void refreshTags(); }} />)}</div>
           <section className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white xl:block">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
@@ -380,11 +453,35 @@ export default function ExpensesPage() {
                         </td>
                         <td className="max-w-[22rem] px-4 py-3.5">
                           <span className="block truncate font-medium text-slate-800">{expense.description}</span>
-                          {showCreatorBadge && expense.created_by_name ? (
-                            <span className="mt-0.5 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-                              Bởi {expense.created_by_name}
-                            </span>
-                          ) : null}
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            {showCreatorBadge && expense.created_by_name ? (
+                              <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                                Bởi {expense.created_by_name}
+                              </span>
+                            ) : null}
+                            {expense.tags.map((tag) => (
+                              <span key={tag.id || tag.name} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700">
+                                <span className="size-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
+                                #{tag.name}
+                              </span>
+                            ))}
+                            {expense.reimburse_status !== 'none' ? (
+                              <button
+                                type="button"
+                                disabled={isViewer}
+                                onClick={() => void toggleReimburseStatus(expense)}
+                                title={isViewer ? undefined : 'Bấm để đổi trạng thái hoàn ứng'}
+                                className={cn(
+                                  'inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold transition',
+                                  expense.reimburse_status === 'pending'
+                                    ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                                    : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200',
+                                )}
+                              >
+                                {expense.reimburse_status === 'pending' ? 'Chờ hoàn ứng' : 'Đã hoàn ứng'}
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="max-w-[18rem] truncate px-4 py-3.5 text-slate-400">{expense.note || '—'}</td>
                         <td className={cn('whitespace-nowrap px-6 py-3.5 text-right font-semibold tabular-nums', isTransfer ? 'text-sky-700' : expense.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>
@@ -400,7 +497,7 @@ export default function ExpensesPage() {
                                   category_id: expense.category.id || null,
                                   date: expense.date,
                                 }}
-                                onSaved={() => void fetchExpenses()}
+                                onSaved={() => { void fetchExpenses(); void refreshTags(); }}
                               />
                               <Button type="button" variant="ghost" size="icon-sm" onClick={() => setPendingDeleteId(expense.id)} className="text-slate-300 opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-600 focus-visible:opacity-100" aria-label={`Xóa ${expense.description}`}>
                                 <Trash2 className="size-4" />
@@ -453,6 +550,7 @@ function TransactionGroup({
   isViewer,
   showCreatorBadge,
   onDelete,
+  onToggleReimburse,
   onSaved,
 }: {
   date: string;
@@ -460,11 +558,12 @@ function TransactionGroup({
   isViewer: boolean;
   showCreatorBadge: boolean;
   onDelete: (id: string) => void;
+  onToggleReimburse: (expense: Expense) => void;
   onSaved: () => void;
 }) {
   return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
     <div className="flex items-center justify-between border-b border-slate-100 px-3.5 py-2.5"><p className="text-xs font-semibold text-slate-600">{formatShortDate(date)}</p><p className={cn('text-xs font-semibold tabular-nums', group.net >= 0 ? 'text-[#00a970]' : 'text-[#f15b64]')}>{group.net >= 0 ? '+' : '−'}{formatCurrency(Math.abs(group.net))}</p></div>
-    <div className="divide-y divide-slate-100">{group.items.map((expense) => <TransactionRow key={expense.id} expense={expense} isViewer={isViewer} showCreatorBadge={showCreatorBadge} onDelete={() => onDelete(expense.id)} onSaved={onSaved} />)}</div>
+    <div className="divide-y divide-slate-100">{group.items.map((expense) => <TransactionRow key={expense.id} expense={expense} isViewer={isViewer} showCreatorBadge={showCreatorBadge} onDelete={() => onDelete(expense.id)} onToggleReimburse={() => onToggleReimburse(expense)} onSaved={onSaved} />)}</div>
   </section>;
 }
 
@@ -473,12 +572,14 @@ function TransactionRow({
   isViewer,
   showCreatorBadge,
   onDelete,
+  onToggleReimburse,
   onSaved,
 }: {
   expense: Expense;
   isViewer: boolean;
   showCreatorBadge: boolean;
   onDelete: () => void;
+  onToggleReimburse: () => void;
   onSaved: () => void;
 }) {
   const isTransfer = expense.type === 'transfer';
@@ -498,6 +599,28 @@ function TransactionRow({
           : expense.note || [expense.category.name, expense.account_name].filter(Boolean).join(' · ')}
         {showCreatorBadge && expense.created_by_name ? ` · Bởi ${expense.created_by_name}` : ''}
       </p>
+      {expense.tags.length > 0 || expense.reimburse_status !== 'none' ? (
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {expense.tags.map((tag) => (
+            <span key={tag.id || tag.name} className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+              #{tag.name}
+            </span>
+          ))}
+          {expense.reimburse_status !== 'none' ? (
+            <button
+              type="button"
+              disabled={isViewer}
+              onClick={onToggleReimburse}
+              className={cn(
+                'rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                expense.reimburse_status === 'pending' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800',
+              )}
+            >
+              {expense.reimburse_status === 'pending' ? 'Chờ hoàn ứng' : 'Đã hoàn ứng'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
     <p className={cn('shrink-0 whitespace-nowrap text-[13px] font-semibold tabular-nums', isTransfer ? 'text-sky-700' : expense.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>
       {isTransfer ? '' : expense.type === 'income' ? '+' : '−'}{formatCurrency(expense.amount)}

@@ -27,6 +27,14 @@ const ACCOUNT_DATA_TABLES = [
 export async function resetAccountData(db: Client, userId: number) {
   await db.batch(
     [
+      {
+        sql: 'DELETE FROM expense_tags WHERE tag_id IN (SELECT id FROM tags WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id = ?))',
+        args: [userId],
+      },
+      {
+        sql: 'DELETE FROM tags WHERE ledger_id IN (SELECT id FROM ledgers WHERE owner_id = ?)',
+        args: [userId],
+      },
       ...ACCOUNT_DATA_TABLES.map((table) => ({
         sql: `DELETE FROM ${table} WHERE user_id = ?`,
         args: [userId],

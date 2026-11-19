@@ -27,6 +27,8 @@ import {
 import { assertLedgerAccess, LedgerAccessError, notifyOtherLedgerMembers } from './ledger-access';
 import { ensureUserLedgerAndAccount } from './ledger-context';
 import { UNCLASSIFIED_EXPENSE } from './schema';
+import { parseSmartSplitMessage } from './smart-split';
+import { extractHashtagsFromText, syncExpenseTags } from './tags';
 import { formatCurrency, getVietnamToday } from './utils';
 import { sendPushToUser } from './web-push';
 
@@ -56,13 +58,22 @@ export interface ChatPipelineOutput {
   status: number;
   body: {
     saved?: boolean;
-    intent?: 'expense' | 'income' | 'transfer' | 'debt' | 'question';
+    intent?: 'expense' | 'income' | 'transfer' | 'debt' | 'question' | 'split';
     fast_path?: boolean;
     message?: string;
     answer?: string;
     qaMetrics?: FinancialQaMetric[];
     transactions?: unknown[];
     budgetAlerts?: unknown[];
+    splitReceipt?: {
+      totalAmount: number;
+      peopleCount: number;
+      myShare: number;
+      receivableAmount: number;
+      debtId: number;
+      debtName: string;
+      creditor: string;
+    };
     receiptData?: {
       debt_id: number;
       debt_name: string;
@@ -344,9 +355,147 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
 
     const isCorrection = !images.length && correctionContext.length > 0;
     const isNewText = !images.length && !isCorrection;
-    const dateMention = isNewText ? findChatTransactionDate(message, today) : undefined;
+    const hashtagInfo = isNewText ? extractHashtagsFromText(message) : { tags: [], cleanedText: message, hasReimburseHint: false };
+    const parsedMessage = hashtagInfo.cleanedText || message;
+    const defaultReimburseStatus: 'none' | 'pending' = hashtagInfo.hasReimburseHint ? 'pending' : 'none';
+
+    const dateMention = isNewText ? findChatTransactionDate(parsedMessage, today) : undefined;
     if (dateMention?.date === null) {
       return { status: 422, body: { error: 'Ngày giao dịch không hợp lệ. Kiểm tra lại ngày/tháng.' } };
+    }
+
+    // 5b. SMART SPLIT 0ms ("lẩu 800k chia 4, mình trả" -> expense 200k + receivable debt 600k)
+    if (isNewText && requestId) {
+      const splitMatch = parseSmartSplitMessage(parsedMessage, today);
+      if (splitMatch) {
+        const fastHistoryForSplit = historyResult.rows.flatMap((row) => {
+          if (!row.category_id || !row.category_name) return [];
+          return [{
+            description: String(row.description),
+            categoryId: String(row.category_id),
+            categoryName: String(row.category_name),
+            categoryColor: String(row.category_color || '#64748b'),
+            type: (row.type === 'income' ? 'income' : 'expense') as 'income' | 'expense',
+            accountId: row.account_id !== null && row.account_id !== undefined ? Number(row.account_id) : null,
+          }];
+        });
+        const guessed = parseFastPathTransaction({
+          message: `${splitMatch.expenseDescription} ${splitMatch.myShare}`,
+          today,
+          categories,
+          budgetCategories,
+          merchantRules,
+          historyRows: fastHistoryForSplit,
+          preferredAccountId: input.accountId ?? null,
+        });
+        const splitCategoryId = guessed?.categoryId
+          ?? expenseCategories.find((c) => c.name === 'Ăn uống')?.id
+          ?? unclassifiedExpense?.id
+          ?? expenseCategories[0]?.id;
+
+        if (splitCategoryId) {
+          const dueDate = addUtcDays(splitMatch.expenseDate, 14);
+          const finalAccountId = guessed?.accountId ?? selectedAccountId;
+          const reqKey = `chat:${requestId}:0`;
+
+          const batchRes = await db.batch([
+            {
+              sql: `INSERT INTO expenses
+                      (user_id, ledger_id, account_id, created_by_user_id, source, reimburse_status, amount, description, note, category_id, expense_date, type, client_request_id)
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'expense', ?
+                    WHERE NOT EXISTS (SELECT 1 FROM expense_chat_requests WHERE user_id = ? AND request_id = ?)`,
+              args: [
+                userId,
+                ctx.ledgerId,
+                finalAccountId,
+                userId,
+                source,
+                defaultReimburseStatus,
+                splitMatch.myShare,
+                splitMatch.expenseDescription,
+                `Chia ${splitMatch.peopleCount} người từ tổng ${formatCurrency(splitMatch.totalAmount)}`,
+                splitCategoryId,
+                splitMatch.expenseDate,
+                reqKey,
+                userId,
+                requestId,
+              ],
+            },
+            {
+              sql: `INSERT INTO debts
+                      (user_id, ledger_id, account_id, name, creditor, direction, total_amount, interest_rate, start_date, due_date, note, status)
+                    SELECT ?, ?, ?, ?, ?, 'receivable', ?, 0, ?, ?, ?, 'active'
+                    WHERE NOT EXISTS (SELECT 1 FROM expense_chat_requests WHERE user_id = ? AND request_id = ?)`,
+              args: [
+                userId,
+                ctx.ledgerId,
+                finalAccountId,
+                splitMatch.debtName,
+                splitMatch.creditor,
+                splitMatch.receivableAmount,
+                splitMatch.expenseDate,
+                dueDate,
+                `Phải thu bạn bè (${splitMatch.peopleCount - 1}/${splitMatch.peopleCount} phần từ ${formatCurrency(splitMatch.totalAmount)})`,
+                userId,
+                requestId,
+              ],
+            },
+            {
+              sql: `INSERT INTO expense_chat_requests (user_id, request_id) VALUES (?, ?)
+                    ON CONFLICT(user_id, request_id) DO NOTHING`,
+              args: [userId, requestId],
+            },
+          ], 'write');
+
+          const expenseId = Number(batchRes[0].lastInsertRowid) || 0;
+          const debtId = Number(batchRes[1].lastInsertRowid) || 0;
+
+          if (expenseId > 0 && hashtagInfo.tags.length > 0) {
+            await syncExpenseTags(db, ctx.ledgerId, expenseId, hashtagInfo.tags);
+          }
+
+          const savedRows = await findChatTransactions(db, userId, requestId);
+          const budgetAlerts = expenseId > 0
+            ? await evaluateBudgetAlerts(db, userId, ctx.ledgerId, [{
+                categoryId: splitCategoryId,
+                expenseDate: splitMatch.expenseDate,
+                addedAmount: splitMatch.myShare,
+              }])
+            : [];
+
+          if (expenseId > 0) {
+            void notifyOtherLedgerMembers(db, sendPushToUser, {
+              ledgerId: ctx.ledgerId,
+              actorUserId: userId,
+              actorName: await getActorName(),
+              title: `Sổ "${grant.ledgerName}" vừa chia tiền nhóm`,
+              body: `${splitMatch.expenseDescription}: Phần bạn ${formatCurrency(splitMatch.myShare)} · Phải thu ${formatCurrency(splitMatch.receivableAmount)}`,
+              url: '/expenses',
+            }).catch(() => {});
+          }
+
+          return {
+            status: expenseId > 0 ? 201 : 200,
+            body: {
+              saved: true,
+              intent: 'split',
+              fast_path: true,
+              message: `Đã chia ${formatCurrency(splitMatch.totalAmount)} cho ${splitMatch.peopleCount} người: chi của bạn ${formatCurrency(splitMatch.myShare)} + phải thu ${formatCurrency(splitMatch.receivableAmount)}.`,
+              transactions: savedRows ?? [],
+              splitReceipt: {
+                totalAmount: splitMatch.totalAmount,
+                peopleCount: splitMatch.peopleCount,
+                myShare: splitMatch.myShare,
+                receivableAmount: splitMatch.receivableAmount,
+                debtId,
+                debtName: splitMatch.debtName,
+                creditor: splitMatch.creditor,
+              },
+              budgetAlerts,
+            },
+          };
+        }
+      }
     }
 
     // 6. FAST-PATH 0ms check (skip LLM completely when 100% confident!)
@@ -364,7 +513,7 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       });
 
       const fastMatch = parseFastPathTransaction({
-        message,
+        message: parsedMessage,
         today,
         categories,
         budgetCategories,
@@ -387,9 +536,17 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
             expense_date: fastMatch.date,
             type: fastMatch.type,
             account_id: finalAccountId,
+            reimburse_status: fastMatch.type === 'expense' ? defaultReimburseStatus : 'none',
           }],
           { ledgerId: ctx.ledgerId, accountId: finalAccountId, source },
         );
+
+        if (saved.inserted && hashtagInfo.tags.length > 0) {
+          for (const row of saved.transactions) {
+            const txId = Number(row.id);
+            if (txId > 0) await syncExpenseTags(db, ctx.ledgerId, txId, hashtagInfo.tags);
+          }
+        }
 
         const budgetAlerts = saved.inserted && fastMatch.type === 'expense'
           ? await evaluateBudgetAlerts(db, userId, ctx.ledgerId, [{
@@ -530,11 +687,27 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       return { status: 200, body: { transactions, correction: isCorrection } };
     }
 
-    const saved = await saveChatTransactions(db, userId, requestId, transactions, {
-      ledgerId: ctx.ledgerId,
-      accountId: selectedAccountId,
-      source,
-    });
+    const saved = await saveChatTransactions(
+      db,
+      userId,
+      requestId,
+      transactions.map((t) => ({
+        ...t,
+        reimburse_status: t.type === 'expense' ? defaultReimburseStatus : 'none',
+      })),
+      {
+        ledgerId: ctx.ledgerId,
+        accountId: selectedAccountId,
+        source,
+      },
+    );
+
+    if (saved.inserted && hashtagInfo.tags.length > 0) {
+      for (const row of saved.transactions) {
+        const txId = Number(row.id);
+        if (txId > 0) await syncExpenseTags(db, ctx.ledgerId, txId, hashtagInfo.tags);
+      }
+    }
 
     const budgetAlerts = saved.inserted
       ? await evaluateBudgetAlerts(
@@ -701,4 +874,11 @@ async function evaluateBudgetAlerts(
     [...expenseGroups.values()].map((group) => getBudgetAlert({ db, userId, ledgerId, ...group })),
   );
   return alerts.flatMap((alert) => alert.status === 'fulfilled' && alert.value ? [alert.value] : []);
+}
+
+function addUtcDays(dateStr: string, days: number): string {
+  const dt = new Date(`${dateStr}T00:00:00Z`);
+  if (!Number.isFinite(dt.getTime())) return dateStr;
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
 }

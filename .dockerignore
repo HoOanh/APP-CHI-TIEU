@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+tests
+docs
+README.md

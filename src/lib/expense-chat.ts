@@ -8,12 +8,13 @@ export interface ChatTransaction {
   expense_date: string;
   type: 'income' | 'expense';
   account_id?: number | null;
+  reimburse_status?: 'none' | 'pending' | 'settled';
 }
 
 function selectChatTransactions(userId: number, requestId: string) {
   return {
     sql: `SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.expense_date, e.type,
-                 c.name AS category_name, a.name AS account_name
+                 e.reimburse_status, c.name AS category_name, a.name AS account_name
           FROM expense_chat_requests r
           LEFT JOIN expenses e ON e.user_id = r.user_id
             AND e.client_request_id >= ? AND e.client_request_id < ?
@@ -43,14 +44,16 @@ export async function saveChatTransactions(
     account_id: tx.account_id ?? context?.accountId ?? null,
     created_by_user_id: userId,
     source: context?.source ?? 'chat',
+    reimburse_status: tx.reimburse_status ?? 'none',
   }));
 
   const [insert, , saved] = await db.batch([
     {
       sql: `INSERT INTO expenses
-              (user_id, ledger_id, account_id, created_by_user_id, source, amount, description, note, category_id, expense_date, type, client_request_id)
+              (user_id, ledger_id, account_id, created_by_user_id, source, reimburse_status, amount, description, note, category_id, expense_date, type, client_request_id)
             SELECT ?, json_extract(value, '$.ledger_id'), json_extract(value, '$.account_id'),
                    json_extract(value, '$.created_by_user_id'), COALESCE(json_extract(value, '$.source'), 'chat'),
+                   COALESCE(json_extract(value, '$.reimburse_status'), 'none'),
                    json_extract(value, '$.amount'), json_extract(value, '$.description'),
                    json_extract(value, '$.note'), json_extract(value, '$.category_id'),
                    json_extract(value, '$.expense_date'), json_extract(value, '$.type'),

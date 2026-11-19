@@ -4,6 +4,7 @@ import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
 import { assertLedgerAccess, LedgerAccessError, notifyOtherLedgerMembers } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
+import { getTagsForExpenses, normalizeTagName, syncExpenseTags } from '@/lib/tags';
 import { formatCurrency, getVietnamToday } from '@/lib/utils';
 import { sendPushToUser } from '@/lib/web-push';
 
@@ -29,6 +30,8 @@ export async function GET(request: NextRequest) {
     const typeFilter = searchParams.get('type');
     const accountIdParam = searchParams.get('account_id');
     const categoryId = searchParams.get('category_id');
+    const tagParam = searchParams.get('tag')?.trim();
+    const reimburseParam = searchParams.get('reimburse_status')?.trim();
     const search = searchParams.get('search')?.trim();
     const cursor = searchParams.get('cursor');
     const limitRaw = Number(searchParams.get('limit') || 50);
@@ -76,6 +79,23 @@ export async function GET(request: NextRequest) {
       whereArgs.push(categoryId);
     }
 
+    if (tagParam && tagParam !== 'all') {
+      const normalizedTag = normalizeTagName(tagParam);
+      if (normalizedTag) {
+        whereSql += ` AND EXISTS (
+          SELECT 1 FROM expense_tags et
+          JOIN tags t ON t.id = et.tag_id
+          WHERE et.expense_id = e.id AND t.ledger_id = ? AND t.name = ?
+        )`;
+        whereArgs.push(ledgerId, normalizedTag);
+      }
+    }
+
+    if (reimburseParam && ['none', 'pending', 'settled'].includes(reimburseParam)) {
+      whereSql += " AND COALESCE(e.reimburse_status, 'none') = ?";
+      whereArgs.push(reimburseParam);
+    }
+
     if (search) {
       whereSql += ' AND (e.description LIKE ? OR e.note LIKE ?)';
       whereArgs.push(`%${search}%`, `%${search}%`);
@@ -106,7 +126,7 @@ export async function GET(request: NextRequest) {
       }),
       db.execute({
         sql: `SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
-                     e.expense_date, e.type, e.created_at, e.created_by_user_id,
+                     e.expense_date, e.type, e.reimburse_status, e.created_at, e.created_by_user_id,
                      c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
                      a1.name AS account_name, a2.name AS to_account_name,
                      cu.name AS created_by_name, cu.avatar AS created_by_avatar
@@ -129,8 +149,17 @@ export async function GET(request: NextRequest) {
     const memberCount = Math.max(1, Number(memberCountResult.rows[0]?.cnt) || 1);
     const rows = itemsResult.rows;
     const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-    const last = items[items.length - 1];
+    const rawItems = hasMore ? rows.slice(0, limit) : rows;
+    const tagMap = await getTagsForExpenses(
+      db,
+      rawItems.map((item) => Number(item.id)),
+    );
+    const items = rawItems.map((row) => ({
+      ...row,
+      reimburse_status: String(row.reimburse_status || 'none'),
+      tags: tagMap.get(Number(row.id)) ?? [],
+    }));
+    const last = rawItems[rawItems.length - 1];
     const nextCursor = hasMore && last
       ? `${String(last.expense_date)}:${Number(last.id)}`
       : null;
@@ -181,8 +210,17 @@ export async function POST(request: NextRequest) {
       expense_date,
       date,
       type = 'expense',
+      reimburse_status,
+      tags: rawTags,
       client_request_id,
     } = body;
+
+    const normalizedReimburse = reimburse_status === 'pending' || reimburse_status === 'settled'
+      ? reimburse_status
+      : 'none';
+    const tagList = Array.isArray(rawTags)
+      ? rawTags.filter((item): item is string => typeof item === 'string')
+      : [];
 
     const finalDate = expense_date || date || getVietnamToday();
     const numericAmount = Number(amount);
@@ -258,8 +296,8 @@ export async function POST(request: NextRequest) {
     const insertResult = await db.execute({
       sql: `
         INSERT INTO expenses
-          (user_id, ledger_id, account_id, to_account_id, amount, description, note, category_id, expense_date, type, created_by_user_id, client_request_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (user_id, ledger_id, account_id, to_account_id, amount, description, note, category_id, expense_date, type, reimburse_status, created_by_user_id, client_request_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
       `,
       args: [
@@ -273,6 +311,7 @@ export async function POST(request: NextRequest) {
         isTransfer ? null : normalizedCategoryId,
         finalDate,
         normalizedType,
+        isTransfer ? 'none' : normalizedReimburse,
         user.id,
         clientRequestId,
       ]
@@ -283,7 +322,7 @@ export async function POST(request: NextRequest) {
     const newExpense = await db.execute({
       sql: `
         SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
-               e.expense_date, e.type, e.created_at, e.created_by_user_id,
+               e.expense_date, e.type, e.reimburse_status, e.created_at, e.created_by_user_id,
                c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
                a1.name AS account_name, a2.name AS to_account_name,
                cu.name AS created_by_name, cu.avatar AS created_by_avatar
@@ -302,6 +341,11 @@ export async function POST(request: NextRequest) {
     if (!newExpense.rows[0]) {
       return NextResponse.json({ error: 'Không thể xác nhận giao dịch đã lưu.' }, { status: 500 });
     }
+
+    const createdRow = newExpense.rows[0];
+    const savedTags = wasInserted && tagList.length > 0
+      ? await syncExpenseTags(db, ledgerId, Number(createdRow.id), tagList)
+      : (await getTagsForExpenses(db, [Number(createdRow.id)])).get(Number(createdRow.id)) ?? [];
 
     const budgetAlert = wasInserted && normalizedType === 'expense' && normalizedCategoryId
       ? await getBudgetAlert({
@@ -327,7 +371,8 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      ...newExpense.rows[0],
+      ...createdRow,
+      tags: savedTags,
       budgetAlert,
     }, { status: wasInserted ? 201 : 200 });
   } catch (error) {
