@@ -35,13 +35,14 @@ export async function saveChatTransactions(
   userId: number,
   requestId: string,
   transactions: ChatTransaction[],
-  context?: { ledgerId?: number; accountId?: number },
+  context?: { ledgerId?: number; accountId?: number; source?: 'chat' | 'voice' | 'shortcut' },
 ) {
   const payload = transactions.map((tx) => ({
     ...tx,
     ledger_id: context?.ledgerId ?? null,
     account_id: tx.account_id ?? context?.accountId ?? null,
     created_by_user_id: userId,
+    source: context?.source ?? 'chat',
   }));
 
   const [insert, , saved] = await db.batch([
@@ -49,7 +50,7 @@ export async function saveChatTransactions(
       sql: `INSERT INTO expenses
               (user_id, ledger_id, account_id, created_by_user_id, source, amount, description, note, category_id, expense_date, type, client_request_id)
             SELECT ?, json_extract(value, '$.ledger_id'), json_extract(value, '$.account_id'),
-                   json_extract(value, '$.created_by_user_id'), 'chat',
+                   json_extract(value, '$.created_by_user_id'), COALESCE(json_extract(value, '$.source'), 'chat'),
                    json_extract(value, '$.amount'), json_extract(value, '$.description'),
                    json_extract(value, '$.note'), json_extract(value, '$.category_id'),
                    json_extract(value, '$.expense_date'), json_extract(value, '$.type'),

@@ -7,7 +7,9 @@ import { useSWRConfig } from 'swr';
 import { notifyTransactionsChanged } from '@/lib/transaction-events';
 import {
   ArrowLeft,
+  Check,
   ImagePlus,
+  Landmark,
   LoaderCircle,
   Mic,
   PenLine,
@@ -15,9 +17,12 @@ import {
   ReceiptText,
   SendHorizontal,
   Sparkles,
+  Wallet,
   X,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn, formatCurrency, formatShortDate } from '@/lib/utils';
 import { useToast } from '@/hooks/useToast';
 import { useVoiceCapture } from '@/hooks/useVoiceCapture';
@@ -32,15 +37,42 @@ import {
   type QueuedAiNote,
 } from '@/lib/offline-queue';
 
+interface QaMetric {
+  label: string;
+  value: string;
+  tone?: 'income' | 'expense' | 'neutral';
+}
+
+interface DebtReceiptData {
+  debt_id: number;
+  debt_name: string;
+  creditor: string;
+  direction: 'payable' | 'receivable';
+  amount: number;
+  paid_amount: number;
+  remaining: number;
+  status: 'active' | 'completed';
+  account_name: string | null;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   images?: string[];
+  fastPath?: boolean;
   transactions?: SavedTransaction[];
   budgetAlerts?: { title: string; message: string; severity: 'warning' | 'danger' }[];
+  qaMetrics?: QaMetric[];
+  receiptData?: DebtReceiptData;
   failedSubmission?: ChatSubmission;
   canEditSubmission?: boolean;
+}
+
+interface ChatAccountOption {
+  id: number;
+  name: string;
+  is_default: boolean;
 }
 
 interface QuickSuggestion {
@@ -67,6 +99,8 @@ interface SavedTransaction {
   description: string;
   category_name: string | null;
   category_id: number | string | null;
+  account_name?: string | null;
+  to_account_name?: string | null;
   note: string | null;
   expense_date: string;
   type: 'income' | 'expense' | 'transfer';
@@ -74,16 +108,34 @@ interface SavedTransaction {
 
 interface ChatResponse {
   saved?: boolean;
+  intent?: 'expense' | 'income' | 'transfer' | 'debt' | 'question';
+  fast_path?: boolean;
+  message?: string;
+  answer?: string;
+  qaMetrics?: QaMetric[];
+  receiptData?: DebtReceiptData;
   transactions?: SavedTransaction[];
   budgetAlerts?: { title: string; message: string; severity: 'warning' | 'danger' }[];
   error?: string;
 }
 
-const quickPrompts = ['Ăn trưa 50k', 'Nhận lương 15tr', 'Cà phê 35k'];
+const quickPrompts = ['Ăn trưa 50k', 'Nhận lương 15tr', 'Tháng này ăn uống hết bao nhiêu?'];
+const debtQuickPrompts = ['Trả nợ tiền nhà 2tr', 'Thu nợ 500k'];
 
-export function TransactionChat({ embedded = false, onBusyChange }: { embedded?: boolean; onBusyChange?: (busy: boolean) => void }) {
+export function TransactionChat({
+  embedded = false,
+  initialMode = 'auto',
+  onBusyChange,
+}: {
+  embedded?: boolean;
+  initialMode?: 'auto' | 'debt';
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [mode, setMode] = useState<'auto' | 'debt'>(initialMode);
+  const [accounts, setAccounts] = useState<ChatAccountOption[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -126,6 +178,14 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
         return new Set(letters).size >= 2;
       })))
       .catch(() => setSuggestions([]));
+    fetch('/api/accounts')
+      .then(async (response) => response.ok ? await response.json() as ChatAccountOption[] : [])
+      .then((items) => {
+        setAccounts(items);
+        const def = items.find((acc) => acc.is_default) ?? items[0];
+        if (def) setSelectedAccountId(String(def.id));
+      })
+      .catch(() => setAccounts([]));
     return () => {
       removeListener();
       window.removeEventListener('online', handleFocus);
@@ -134,7 +194,7 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
   }, []);
 
   const appendFiles = (files: File[]) => {
-    const accepted = files.slice(0, Math.max(0, 8 - imageFiles.length));
+    const accepted = files.slice(0, Math.max(0, 6 - imageFiles.length));
     if (!accepted.length) return;
     setImageFiles((current) => [...current, ...accepted]);
     setImagePreviews((current) => [...current, ...accepted.map((file) => URL.createObjectURL(file))]);
@@ -180,15 +240,43 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
 
     try {
       const formData = new FormData();
-      formData.append('type', 'expense');
+      formData.append('type', mode === 'debt' ? 'debt' : 'expense');
+      formData.append('mode', mode);
       formData.append('client_request_id', id);
+      if (selectedAccountId) formData.append('account_id', selectedAccountId);
       if (text) formData.append('message', text);
       files.forEach((file) => formData.append('images', file));
 
       const response = await fetch('/api/chat', { method: 'POST', body: formData });
       canEditSubmission = [400, 413, 422].includes(response.status);
       const data: ChatResponse = await response.json().catch(() => ({}));
-      if (!response.ok || !data.saved || !data.transactions) {
+      if (!response.ok) {
+        const fallback = canEditSubmission ? 'Kiểm tra lại nội dung hoặc dung lượng ảnh.' : 'Chưa nhận được kết quả lưu. Hãy thử lại từ tin nhắn này.';
+        throw new Error(data.error || fallback);
+      }
+
+      if (data.intent === 'question' && data.answer) {
+        setMessages((current) => [...current, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: data.answer || '',
+          qaMetrics: data.qaMetrics,
+        }]);
+        return;
+      }
+
+      if (data.intent === 'debt' && data.receiptData) {
+        setMessages((current) => [...current, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: data.message || 'Đã ghi nhận thanh toán công nợ.',
+          receiptData: data.receiptData,
+        }]);
+        refreshData();
+        return;
+      }
+
+      if (!data.saved || !data.transactions) {
         const fallback = canEditSubmission ? 'Kiểm tra lại nội dung hoặc dung lượng ảnh.' : 'Chưa nhận được kết quả lưu. Hãy thử lại từ tin nhắn này.';
         throw new Error(data.error || fallback);
       }
@@ -197,6 +285,7 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
       setMessages((current) => [...current, {
         id: crypto.randomUUID(),
         role: 'assistant',
+        fastPath: Boolean(data.fast_path),
         content: transactions.length
           ? `Đã lưu ${transactions.length} giao dịch.`
           : 'Tin nhắn này đã được xử lý.',
@@ -342,11 +431,48 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
           <ArrowLeft className="size-5" />
         </Link>}
         <div>
-          <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-slate-800">Ghi giao dịch</h1>
-          <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">Nhập chữ, nói hoặc gửi ảnh hóa đơn</p>
+          <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-slate-800">
+            {mode === 'debt' ? 'Trả & Thu nợ AI' : 'Ghi & Hỏi đáp AI'}
+          </h1>
+          <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">Ghi thu chi, trả nợ, chuyển ví hoặc hỏi số liệu trực tiếp</p>
         </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setMode('auto')}
+              className={cn(
+                'rounded-lg px-2.5 py-1 font-medium transition',
+                mode === 'auto' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-700',
+              )}
+            >
+              Tự động
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('debt')}
+              className={cn(
+                'flex items-center gap-1 rounded-lg px-2.5 py-1 font-medium transition',
+                mode === 'debt' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-500 hover:text-slate-700',
+              )}
+            >
+              <Landmark className="size-3" /> Công nợ
+            </button>
+          </div>
+          {accounts.length > 1 ? (
+            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+              <SelectTrigger aria-label="Chọn ví khi chat" className="hidden h-8 w-36 rounded-xl bg-white text-xs sm:flex">
+                <Wallet className="mr-1 size-3.5 text-slate-500" />
+                <SelectValue placeholder="Ví" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((acc) => (
+                  <SelectItem key={acc.id} value={String(acc.id)}>{acc.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
           <QuickEntryAccess onChatPage={!embedded} />
           <ManualTransactionDialog compact iconOnMobile onSaved={refreshData} />
         </div>
@@ -365,7 +491,13 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
           onDelete={async (entry) => { await removeOfflineQueueEntry(entry.id); setOfflineEntries(await listOfflineQueue()); }}
         />
         {messages.length === 0 ? (
-          <EmptyState compact={embedded} suggestions={suggestions} onPrompt={(value) => { setInput(value); composerRef.current?.focus(); }} onImage={() => fileInputRef.current?.click()} />
+          <EmptyState
+            compact={embedded}
+            debtMode={mode === 'debt'}
+            suggestions={suggestions}
+            onPrompt={(value) => { setInput(value); composerRef.current?.focus(); }}
+            onImage={() => fileInputRef.current?.click()}
+          />
         ) : (
           <div className="mx-auto max-w-2xl space-y-4">
             {messages.map((message) => (
@@ -448,24 +580,31 @@ export function TransactionChat({ embedded = false, onBusyChange }: { embedded?:
   );
 }
 
-function EmptyState({ compact, suggestions, onPrompt, onImage }: { compact: boolean; suggestions: QuickSuggestion[]; onPrompt: (value: string) => void; onImage: () => void }) {
+function EmptyState({ compact, debtMode, suggestions, onPrompt, onImage }: { compact: boolean; debtMode: boolean; suggestions: QuickSuggestion[]; onPrompt: (value: string) => void; onImage: () => void }) {
+  const defaultPrompts = debtMode ? debtQuickPrompts : quickPrompts;
   return (
     <section className={cn("mx-auto flex flex-col", compact
       ? "max-w-xl"
       : "min-h-full max-w-md justify-center pb-12 text-center md:justify-start md:pb-0 md:pt-12")}>
       {compact ? <p className="text-sm text-slate-600">Nhập và nhấn Enter, hoặc bấm mic rồi nói. Có thể sửa ngay sau khi lưu.</p> : <>
       <span className="mx-auto flex size-14 items-center justify-center rounded-3xl bg-emerald-50 text-[#00bc7c]">
-        <ReceiptText className="size-7" strokeWidth={1.8} />
+        {debtMode ? <Landmark className="size-7" strokeWidth={1.8} /> : <ReceiptText className="size-7" strokeWidth={1.8} />}
       </span>
-      <h2 className="mt-5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Ghi một giao dịch mới</h2>
-      <p className="mx-auto mt-2 max-w-[270px] text-sm leading-6 text-slate-500">Nhập chữ, bấm mic hoặc gửi ảnh. Giao dịch nhận diện được sẽ được lưu ngay.</p>
+      <h2 className="mt-5 text-lg font-semibold tracking-[-0.03em] text-slate-800">
+        {debtMode ? 'Ghi nhận trả nợ & thu nợ' : 'Ghi giao dịch & Hỏi đáp'}
+      </h2>
+      <p className="mx-auto mt-2 max-w-[300px] text-sm leading-6 text-slate-500">
+        {debtMode
+          ? 'Nhập số tiền trả/thu nợ hoặc gửi ảnh chuyển khoản, mình sẽ cập nhật công nợ và số dư ví tự động.'
+          : 'Nhập chữ, bấm mic, gửi ảnh hoặc hỏi tổng chi/số dư. Giao dịch quen thuộc sẽ lưu tức thì.'}
+      </p>
       </>}
       <div className={cn("flex flex-wrap gap-2", compact ? "mt-3" : "mt-5 justify-center")}>
-        {(suggestions.length ? suggestions.map((suggestion) => ({
+        {(!debtMode && suggestions.length ? suggestions.map((suggestion) => ({
           id: `${suggestion.label}-${suggestion.amount}-${suggestion.categoryName}`,
           label: `${suggestion.label} · ${suggestion.amountText}đ`,
           prompt: suggestion.prompt,
-        })) : quickPrompts.map((prompt) => ({ id: prompt, label: prompt, prompt }))).map((suggestion) => (
+        })) : defaultPrompts.map((prompt) => ({ id: prompt, label: prompt, prompt }))).map((suggestion) => (
           <button key={suggestion.id} type="button" onClick={() => onPrompt(suggestion.prompt)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-[#00bc7c]/40 hover:text-[#00a970]">{suggestion.label}</button>
         ))}
       </div>
@@ -529,7 +668,48 @@ function MessageBubble({ message, onRetry, onEditSubmission, onSaved }: {
     <div className={cn('flex flex-col', isUser ? 'items-end' : 'items-start')}>
       <div className={cn('max-w-[90%] rounded-2xl px-3.5 py-3 text-sm leading-5 shadow-sm', isUser ? 'rounded-br-md bg-[#00bc7c] text-white' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700')}>
         {message.images?.length ? <div className="mb-2 grid grid-cols-2 gap-1.5">{message.images.map((image, index) => <Image key={image} src={image} alt={`Ảnh giao dịch ${index + 1}`} width={240} height={160} unoptimized className="h-28 w-full rounded-xl object-cover" />)}</div> : null}
+        {!isUser && message.fastPath ? (
+          <div className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 border border-amber-200">
+            <Zap className="size-3 text-amber-500" /> Fast-Path 0ms
+          </div>
+        ) : null}
         {message.content ? <p className="whitespace-pre-wrap">{message.content}</p> : null}
+        {message.qaMetrics?.length ? (
+          <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
+            {message.qaMetrics.map((metric) => (
+              <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+                <p className="text-[11px] text-slate-500">{metric.label}</p>
+                <p className={cn(
+                  'mt-0.5 text-sm font-semibold tabular-nums',
+                  metric.tone === 'income' ? 'text-[#00a970]' : metric.tone === 'expense' ? 'text-[#f15b64]' : 'text-slate-800',
+                )}>
+                  {metric.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {message.receiptData ? (
+          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
+                <Landmark className="size-3.5" />
+                {message.receiptData.direction === 'receivable' ? 'Biên lai thu nợ' : 'Biên lai trả nợ'}
+              </span>
+              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200">
+                {message.receiptData.status === 'completed' ? 'Đã tất toán' : 'Đang theo dõi'}
+              </span>
+            </div>
+            <p className="mt-1.5 text-sm font-semibold text-slate-900">{message.receiptData.debt_name}</p>
+            <p className="mt-1 text-base font-bold tabular-nums text-[#00a970]">
+              {message.receiptData.direction === 'receivable' ? '+' : '−'}{formatCurrency(message.receiptData.amount)}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Còn lại: <strong>{formatCurrency(message.receiptData.remaining)}</strong>
+              {message.receiptData.account_name ? ` · Ví: ${message.receiptData.account_name}` : ''}
+            </p>
+          </div>
+        ) : null}
         {message.transactions?.map((transaction) => <TransactionCard key={transaction.id} transaction={transaction} onSaved={onSaved} />)}
         {message.budgetAlerts?.length ? (
           <div className="mt-3 space-y-2">
@@ -567,24 +747,73 @@ function TransactionCard({ transaction, onSaved }: {
   transaction: SavedTransaction;
   onSaved: (transaction: SavedTransaction) => void;
 }) {
+  const { showToast } = useToast();
+  const [ruleSaved, setRuleSaved] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
   const isIncome = transaction.type === 'income';
+  const isTransfer = transaction.type === 'transfer';
   const editableTransaction = useMemo(() => ({
     ...transaction,
     id: String(transaction.id),
     date: transaction.expense_date,
   }), [transaction]);
+
+  const handleSaveRule = async () => {
+    if (!transaction.category_id || !transaction.description || isTransfer || savingRule || ruleSaved) return;
+    setSavingRule(true);
+    try {
+      const response = await fetch('/api/merchant-rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword: transaction.description,
+          category_id: Number(transaction.category_id),
+          type: transaction.type === 'income' ? 'income' : 'expense',
+        }),
+      });
+      if (!response.ok) throw new Error('Không lưu được quy tắc');
+      setRuleSaved(true);
+      showToast(`Đã ghi nhớ "${transaction.description}" → ${transaction.category_name}`, 'success');
+    } catch {
+      showToast('Không thể lưu quy tắc Fast-Path', 'error');
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
   return (
     <div className="mt-3 rounded-xl border border-slate-200 bg-[#fbfcfc] p-3 text-slate-700">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className={cn('text-lg font-semibold tabular-nums', isIncome ? 'text-[#00a970]' : 'text-[#f15b64]')}>{isIncome ? '+' : '−'}{formatCurrency(transaction.amount)}</p>
+          <p className={cn('text-lg font-semibold tabular-nums', isTransfer ? 'text-sky-700' : isIncome ? 'text-[#00a970]' : 'text-[#f15b64]')}>
+            {isTransfer ? '' : isIncome ? '+' : '−'}{formatCurrency(transaction.amount)}
+          </p>
           <p className="mt-1 break-words text-sm font-medium">{transaction.description}</p>
         </div>
         <ManualTransactionDialog transaction={editableTransaction} onSaved={(saved) => {
           if (saved) onSaved(saved);
         }} />
       </div>
-      <p className="mt-2 text-xs text-slate-500">{transaction.category_name} · {formatShortDate(transaction.expense_date)}</p>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span>
+          {isTransfer
+            ? `${transaction.account_name || 'Ví nguồn'} → ${transaction.to_account_name || 'Ví đích'}`
+            : `${transaction.category_name || 'Khác'}${transaction.account_name ? ` (${transaction.account_name})` : ''}`}
+          {' · '}
+          {formatShortDate(transaction.expense_date)}
+        </span>
+        {!isTransfer && transaction.category_id ? (
+          <button
+            type="button"
+            disabled={savingRule || ruleSaved}
+            onClick={() => void handleSaveRule()}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:opacity-70"
+          >
+            {ruleSaved ? <Check className="size-3 text-emerald-600" /> : <Zap className="size-3 text-amber-500" />}
+            {ruleSaved ? 'Đã học quy tắc' : 'Luôn phân loại thế này'}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

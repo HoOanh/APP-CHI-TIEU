@@ -3,13 +3,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, MessageSquare, Plus, Info, Clock, PiggyBank, History, FileText } from "lucide-react";
+import { ArrowLeft, MessageSquare, Plus, Info, Clock, PiggyBank, History, FileText, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MonthPicker } from "@/components/MonthPicker";
@@ -24,6 +27,9 @@ const jarSchema = z.object({ target_amount: z.string().refine((value) => Number(
 
 type Debt = {
   id: string;
+  direction?: "payable" | "receivable";
+  account_id?: number | null;
+  account_name?: string | null;
   name: string;
   creditor: string;
   total_amount: number;
@@ -39,7 +45,15 @@ type Payment = {
   amount: number;
   payment_date?: string;
   date?: string;
+  account_name?: string | null;
+  expense_id?: number | null;
   note: string;
+};
+
+type AccountOption = {
+  id: number;
+  name: string;
+  is_default: boolean;
 };
 
 type DebtJar = {
@@ -59,6 +73,9 @@ export default function DebtDetailPage() {
   const [debt, setDebt] = useState<Debt | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [jars, setJars] = useState<DebtJar[]>([]);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [paymentAccountId, setPaymentAccountId] = useState<string>('');
+  const [syncToExpense, setSyncToExpense] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const { showToast } = useToast();
 
@@ -74,16 +91,29 @@ export default function DebtDetailPage() {
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Mock API calls for now, replace with real ones
-      const [debtRes, paymentsRes, jarsRes] = await Promise.all([
+      const [debtRes, paymentsRes, jarsRes, accountsRes] = await Promise.all([
         fetch(`/api/debts/${id}`),
         fetch(`/api/debts/${id}/payments`),
-        fetch(`/api/debts/jars?debt_id=${id}`)
+        fetch(`/api/debts/jars?debt_id=${id}`),
+        fetch('/api/accounts'),
       ]);
       
-      if (debtRes.ok) setDebt(await debtRes.json());
+      let nextDebt: Debt | null = null;
+      if (debtRes.ok) {
+        nextDebt = await debtRes.json() as Debt;
+        setDebt(nextDebt);
+      }
       if (paymentsRes.ok) setPayments(await paymentsRes.json());
       if (jarsRes.ok) setJars(await jarsRes.json());
+      if (accountsRes.ok) {
+        const accs = await accountsRes.json() as AccountOption[];
+        setAccounts(accs);
+        if (nextDebt?.account_id) setPaymentAccountId(String(nextDebt.account_id));
+        else {
+          const def = accs.find((a) => a.is_default) ?? accs[0];
+          if (def) setPaymentAccountId(String(def.id));
+        }
+      }
     } catch (error) {
       console.error("Fetch error", error);
     } finally {
@@ -97,12 +127,26 @@ export default function DebtDetailPage() {
       fetch(`/api/debts/${id}`),
       fetch(`/api/debts/${id}/payments`),
       fetch(`/api/debts/jars?debt_id=${id}`),
+      fetch('/api/accounts'),
     ])
-      .then(async ([debtRes, paymentsRes, jarsRes]) => {
+      .then(async ([debtRes, paymentsRes, jarsRes, accountsRes]) => {
         if (!active) return;
-        if (debtRes.ok) setDebt(await debtRes.json() as Debt);
+        let nextDebt: Debt | null = null;
+        if (debtRes.ok) {
+          nextDebt = await debtRes.json() as Debt;
+          setDebt(nextDebt);
+        }
         if (paymentsRes.ok) setPayments(await paymentsRes.json() as Payment[]);
         if (jarsRes.ok) setJars(await jarsRes.json() as DebtJar[]);
+        if (accountsRes.ok) {
+          const accs = await accountsRes.json() as AccountOption[];
+          setAccounts(accs);
+          if (nextDebt?.account_id) setPaymentAccountId(String(nextDebt.account_id));
+          else {
+            const def = accs.find((a) => a.is_default) ?? accs[0];
+            if (def) setPaymentAccountId(String(def.id));
+          }
+        }
       })
       .catch((error) => console.error('Fetch error', error))
       .finally(() => {
@@ -116,19 +160,36 @@ export default function DebtDetailPage() {
       const res = await fetch(`/api/debts/${id}/payments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: Number(values.amount), payment_date: getVietnamToday(), note: values.note }),
+        body: JSON.stringify({
+          amount: Number(values.amount),
+          payment_date: getVietnamToday(),
+          note: values.note,
+          account_id: paymentAccountId ? Number(paymentAccountId) : null,
+          sync_to_expense: syncToExpense,
+        }),
       });
       if (res.ok) {
-        showToast("Đã ghi nhận thanh toán");
+        showToast(syncToExpense ? "Đã ghi nhận thanh toán & đồng bộ ví" : "Đã ghi nhận thanh toán");
         setIsPaymentOpen(false);
         paymentForm.reset({ amount: '', note: '' });
-        fetchData();
+        await fetchData();
       } else {
         const result: { error?: string } = await res.json();
         showToast(result.error || "Lỗi khi thêm thanh toán", "error");
       }
     } catch {
       showToast("Lỗi khi thêm thanh toán", "error");
+    }
+  };
+
+  const handleDeletePayment = async (paymentId: string) => {
+    try {
+      const res = await fetch(`/api/debts/${id}/payments/${paymentId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Không thể xóa thanh toán');
+      showToast('Đã xóa bản ghi thanh toán & đồng bộ lại ví');
+      await fetchData();
+    } catch {
+      showToast('Không thể xóa thanh toán', 'error');
     }
   };
 
@@ -162,7 +223,9 @@ export default function DebtDetailPage() {
   }
 
   const progress = getPercentage(debt.paid_amount, debt.total_amount);
-  const remaining = debt.total_amount - debt.paid_amount;
+  const remaining = Math.max(0, debt.total_amount - debt.paid_amount);
+  const isReceivable = debt.direction === 'receivable';
+  const actionLabel = isReceivable ? 'Thu nợ' : 'Trả nợ';
   
   // Circular Progress SVG logic
   const radius = 45;
@@ -175,9 +238,16 @@ export default function DebtDetailPage() {
         <Button variant="ghost" size="icon" onClick={() => router.back()} className="rounded-full h-10 w-10">
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold truncate">{debt.name}</h1>
-          <p className="text-sm text-muted-foreground">{debt.creditor}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-bold truncate">{debt.name}</h1>
+            <Badge variant="outline" className={cn('text-[11px]', isReceivable ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700')}>
+              {isReceivable ? 'Khoản cho vay (Phải thu)' : 'Khoản đi vay (Phải trả)'}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {debt.creditor}{debt.account_name ? ` · Ví mặc định: ${debt.account_name}` : ''}
+          </p>
         </div>
       </header>
 
@@ -209,7 +279,7 @@ export default function DebtDetailPage() {
           
           <div className="grid grid-cols-3 gap-2 text-center divide-x divide-border">
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Đã trả</p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{isReceivable ? 'Đã thu' : 'Đã trả'}</p>
               <p className="font-semibold text-emerald-500 text-sm tabular-nums">{formatCurrency(debt.paid_amount)}</p>
             </div>
             <div>
@@ -217,7 +287,7 @@ export default function DebtDetailPage() {
               <p className="font-semibold text-foreground text-sm tabular-nums">{formatCurrency(remaining)}</p>
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Tổng nợ</p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{isReceivable ? 'Tổng cho vay' : 'Tổng nợ'}</p>
               <p className="font-semibold text-muted-foreground text-sm tabular-nums">{formatCurrency(debt.total_amount)}</p>
             </div>
           </div>
@@ -229,12 +299,12 @@ export default function DebtDetailPage() {
         <Dialog open={isPaymentOpen} onOpenChange={setIsPaymentOpen}>
           <DialogTrigger asChild>
             <Button className="w-full h-12 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm flex items-center gap-2">
-              <Plus className="h-4 w-4" /> Trả nợ
+              <Plus className="h-4 w-4" /> {actionLabel}
             </Button>
           </DialogTrigger>
           <DialogContent className="rounded-2xl max-w-sm">
             <DialogHeader>
-              <DialogTitle>Ghi nhận trả nợ</DialogTitle>
+              <DialogTitle>Ghi nhận {actionLabel.toLowerCase()}</DialogTitle>
             </DialogHeader>
             <form onSubmit={paymentForm.handleSubmit(handleAddPayment)} noValidate className="mt-2 space-y-4">
               <div className="space-y-2">
@@ -242,6 +312,28 @@ export default function DebtDetailPage() {
                 <Input id="payment-amount" type="number" min="1" className="tabular-nums" value={newPayment.amount ?? ''} aria-invalid={Boolean(paymentForm.formState.errors.amount)} onChange={(event) => paymentForm.setValue('amount', event.target.value, { shouldValidate: true })} />
                 {paymentForm.formState.errors.amount?.message ? <p role="alert" className="text-xs text-red-600">{paymentForm.formState.errors.amount.message}</p> : null}
               </div>
+              {accounts.length > 0 ? (
+                <div className="space-y-2">
+                  <Label htmlFor="payment-account">{isReceivable ? 'Ví nhận tiền' : 'Ví thanh toán'}</Label>
+                  <Select value={paymentAccountId} onValueChange={setPaymentAccountId}>
+                    <SelectTrigger id="payment-account" className="h-10 rounded-xl bg-white">
+                      <SelectValue placeholder="Chọn ví" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {accounts.map((acc) => (
+                        <SelectItem key={acc.id} value={String(acc.id)}>{acc.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs">
+                <div>
+                  <p className="font-medium text-slate-800">Tự động cập nhật số dư ví</p>
+                  <p className="text-slate-500">{isReceivable ? 'Ghi thêm 1 giao dịch thu nhập vào ví' : 'Ghi thêm 1 giao dịch chi vào ví'}</p>
+                </div>
+                <Switch checked={syncToExpense} onCheckedChange={setSyncToExpense} />
+              </label>
               <div className="space-y-2">
                 <Label htmlFor="payment-note">Ghi chú</Label>
                 <Input id="payment-note" value={newPayment.note ?? ''} onChange={(event) => paymentForm.setValue('note', event.target.value, { shouldValidate: true })} />
@@ -251,8 +343,8 @@ export default function DebtDetailPage() {
           </DialogContent>
         </Dialog>
 
-        <Link href="/debt-chat" className={cn(buttonVariants({ variant: "outline" }), "w-full h-12 rounded-xl border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 shadow-sm flex items-center gap-2")}>
-          <MessageSquare className="h-4 w-4" /> Trả bằng AI
+        <Link href="/chat?mode=debt" className={cn(buttonVariants({ variant: "outline" }), "w-full h-12 rounded-xl border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 shadow-sm flex items-center gap-2")}>
+          <MessageSquare className="h-4 w-4" /> {actionLabel} bằng AI
         </Link>
       </div>
 
@@ -355,20 +447,34 @@ export default function DebtDetailPage() {
             <ScrollArea className="h-[250px]">
               <div className="divide-y divide-border">
                 {payments.map(p => (
-                  <div key={p.id} className="p-4 flex items-center justify-between hover:bg-accent/30 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                  <div key={p.id} className="p-4 flex items-center justify-between gap-3 hover:bg-accent/30 transition-colors">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="w-8 h-8 shrink-0 rounded-full bg-emerald-500/10 flex items-center justify-center">
                         <FileText className="h-4 w-4 text-emerald-500" />
                       </div>
-                      <div>
-                        <p className="text-sm font-medium">{p.note || "Trả nợ"}</p>
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> {formatDate(p.payment_date || p.date || '')}
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{p.note || actionLabel}</p>
+                        <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" /> {formatDate(p.payment_date || p.date || '')}</span>
+                          {p.account_name ? <span>· {p.account_name}</span> : null}
+                          {p.expense_id ? <span className="text-emerald-700">· Đã đồng bộ ví</span> : null}
                         </p>
                       </div>
                     </div>
-                    <div className="text-emerald-500 font-semibold tabular-nums text-sm">
-                      +{formatCurrency(p.amount)}
+                    <div className="flex shrink-0 items-center gap-2">
+                      <div className="text-emerald-500 font-semibold tabular-nums text-sm">
+                        +{formatCurrency(p.amount)}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Xóa lần thanh toán này"
+                        onClick={() => void handleDeletePayment(p.id)}
+                        className="text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
                     </div>
                   </div>
                 ))}

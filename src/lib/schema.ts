@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client';
 
 export const UNCLASSIFIED_EXPENSE = 'Chưa phân loại';
-const SCHEMA_VERSION = '2026-11-v2.0-s1';
+const SCHEMA_VERSION = '2026-11-v2.0-s3';
 
 export async function initializeDatabase(db: Client) {
   await db.execute('PRAGMA foreign_keys = ON').catch(() => {});
@@ -290,6 +290,39 @@ export async function initializeDatabase(db: Client) {
       UNIQUE(user_id, kind, occurrence_key),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS merchant_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      keyword TEXT NOT NULL,
+      category_id INTEGER NOT NULL,
+      type TEXT NOT NULL DEFAULT 'expense',
+      account_id INTEGER,
+      hit_count INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL,
+      UNIQUE(ledger_id, keyword, type)
+    );
+
+    CREATE TABLE IF NOT EXISTS shortcut_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      ledger_id INTEGER NOT NULL,
+      default_account_id INTEGER,
+      name TEXT NOT NULL,
+      key_prefix TEXT NOT NULL,
+      key_hash TEXT NOT NULL UNIQUE,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+      FOREIGN KEY (default_account_id) REFERENCES accounts(id) ON DELETE SET NULL
+    );
   `);
 
   await migrateLegacyTables(db);
@@ -341,6 +374,12 @@ export async function initializeDatabase(db: Client) {
       ON ai_insights(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status
       ON notification_deliveries(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_merchant_rules_ledger
+      ON merchant_rules(ledger_id, type, keyword);
+    CREATE INDEX IF NOT EXISTS idx_shortcut_hash
+      ON shortcut_keys(key_hash);
+    CREATE INDEX IF NOT EXISTS idx_shortcut_user
+      ON shortcut_keys(user_id, revoked_at);
   `);
 
   // Insert default categories: [name, icon, color, kind, budget_group]
@@ -453,10 +492,11 @@ async function migrateCategoriesV2(db: Client) {
   }
 
   await db.execute('PRAGMA foreign_keys = OFF').catch(() => {});
+  await db.execute('PRAGMA legacy_alter_table = ON').catch(() => {});
   try {
     await db.executeMultiple(`
-      ALTER TABLE categories RENAME TO categories_legacy;
-      CREATE TABLE categories (
+      DROP TABLE IF EXISTS categories_v2;
+      CREATE TABLE categories_v2 (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         ledger_id INTEGER,
@@ -469,14 +509,16 @@ async function migrateCategoriesV2(db: Client) {
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
       );
-      INSERT INTO categories (id, user_id, name, icon, color, kind, created_at)
+      INSERT INTO categories_v2 (id, user_id, name, icon, color, kind, created_at)
       SELECT id, user_id, name, icon, color,
         CASE WHEN name = 'Thu nhập' THEN 'income' ELSE 'expense' END,
         created_at
-      FROM categories_legacy;
-      DROP TABLE categories_legacy;
+      FROM categories;
+      DROP TABLE categories;
+      ALTER TABLE categories_v2 RENAME TO categories;
     `);
   } finally {
+    await db.execute('PRAGMA legacy_alter_table = OFF').catch(() => {});
     await db.execute('PRAGMA foreign_keys = ON').catch(() => {});
   }
 }

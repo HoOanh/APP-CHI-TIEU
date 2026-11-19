@@ -51,6 +51,7 @@ import Link from 'next/link';
 import { clearPwaCache } from '@/lib/pwa-cache';
 import { AccountsManager } from '@/components/AccountsManager';
 import { ProfileModulesSettings } from '@/components/ProfileModulesSettings';
+import { ShortcutsSettings } from '@/components/ShortcutsSettings';
 import type { EnabledModules, PersonaId } from '@/lib/modules';
 
 const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
@@ -461,6 +462,8 @@ export default function SettingsPage() {
       <AccountsManager key={`accounts-${dataRevision}`} />
 
       <div id="ai-ca-nhan" className="scroll-mt-6"><AiProvidersSettings key={dataRevision} /></div>
+
+      <ShortcutsSettings key={`shortcuts-${dataRevision}`} />
 
       <div id="nhac-nho" className="scroll-mt-6"><PwaReminderSettings key={dataRevision} /></div>
 

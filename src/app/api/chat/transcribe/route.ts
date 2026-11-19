@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/current-user';
-import { transcribeAudio } from '@/lib/gemini';
+import { AiRateLimitError, transcribeAudio } from '@/lib/gemini';
 
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
@@ -30,6 +30,12 @@ export async function POST(request: NextRequest) {
     const text = await transcribeAudio(base64Data, mimeType, user.id);
     return NextResponse.json({ text });
   } catch (error) {
+    if (error instanceof AiRateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 429, headers: { 'Retry-After': String(error.retryAfterSeconds) } },
+      );
+    }
     console.error('[chat/transcribe]', error);
     return NextResponse.json(
       { error: 'Không thể nhận diện giọng nói lúc này. Vui lòng thử lại.' },
