@@ -15,7 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MonthPicker } from "@/components/MonthPicker";
 import { useToast } from "@/hooks/useToast";
 import { formatCurrency, formatDate, getCurrentMonth, getPercentage, getVietnamToday, cn } from "@/lib/utils";
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 
@@ -37,15 +37,18 @@ type Debt = {
 type Payment = {
   id: string;
   amount: number;
-  date: string;
+  payment_date?: string;
+  date?: string;
   note: string;
 };
 
 type DebtJar = {
   id: string;
   month: string; // YYYY-MM
-  target_amount: number;
-  saved_amount: number;
+  planned_amount?: number;
+  actual_paid?: number;
+  target_amount?: number;
+  saved_amount?: number;
 };
 
 export default function DebtDetailPage() {
@@ -65,8 +68,8 @@ export default function DebtDetailPage() {
   
   const paymentForm = useForm<z.infer<typeof paymentSchema>>({ resolver: zodResolver(paymentSchema), defaultValues: { amount: '', note: '' } });
   const jarForm = useForm<z.infer<typeof jarSchema>>({ resolver: zodResolver(jarSchema), defaultValues: { target_amount: '', month: getCurrentMonth() } });
-  const newPayment = paymentForm.watch();
-  const newJar = jarForm.watch();
+  const newPayment = useWatch({ control: paymentForm.control });
+  const newJar = useWatch({ control: jarForm.control });
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
@@ -89,10 +92,24 @@ export default function DebtDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    // Load the route-scoped debt after the dynamic id is available.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchData();
-  }, [fetchData]);
+    let active = true;
+    Promise.all([
+      fetch(`/api/debts/${id}`),
+      fetch(`/api/debts/${id}/payments`),
+      fetch(`/api/debts/jars?debt_id=${id}`),
+    ])
+      .then(async ([debtRes, paymentsRes, jarsRes]) => {
+        if (!active) return;
+        if (debtRes.ok) setDebt(await debtRes.json() as Debt);
+        if (paymentsRes.ok) setPayments(await paymentsRes.json() as Payment[]);
+        if (jarsRes.ok) setJars(await jarsRes.json() as DebtJar[]);
+      })
+      .catch((error) => console.error('Fetch error', error))
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => { active = false; };
+  }, [id]);
 
   const handleAddPayment = async (values: z.infer<typeof paymentSchema>) => {
     try {
@@ -222,12 +239,12 @@ export default function DebtDetailPage() {
             <form onSubmit={paymentForm.handleSubmit(handleAddPayment)} noValidate className="mt-2 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="payment-amount">Số tiền</Label>
-                <Input id="payment-amount" type="number" min="1" className="tabular-nums" value={newPayment.amount} aria-invalid={Boolean(paymentForm.formState.errors.amount)} onChange={(event) => paymentForm.setValue('amount', event.target.value, { shouldValidate: true })} />
+                <Input id="payment-amount" type="number" min="1" className="tabular-nums" value={newPayment.amount ?? ''} aria-invalid={Boolean(paymentForm.formState.errors.amount)} onChange={(event) => paymentForm.setValue('amount', event.target.value, { shouldValidate: true })} />
                 {paymentForm.formState.errors.amount?.message ? <p role="alert" className="text-xs text-red-600">{paymentForm.formState.errors.amount.message}</p> : null}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="payment-note">Ghi chú</Label>
-                <Input id="payment-note" value={newPayment.note} onChange={(event) => paymentForm.setValue('note', event.target.value, { shouldValidate: true })} />
+                <Input id="payment-note" value={newPayment.note ?? ''} onChange={(event) => paymentForm.setValue('note', event.target.value, { shouldValidate: true })} />
               </div>
               <Button type="submit" className="h-11 w-full rounded-xl font-semibold">Lưu</Button>
             </form>
@@ -285,14 +302,14 @@ export default function DebtDetailPage() {
                 <div className="space-y-2">
                   <Label>Tháng</Label>
                   <MonthPicker
-                    month={newJar.month}
+                    month={newJar.month ?? getCurrentMonth()}
                     onChange={(value) => jarForm.setValue('month', value, { shouldValidate: true })}
                     className="h-11 w-full bg-white font-medium"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="jar-target">Mục tiêu để dành</Label>
-                  <Input id="jar-target" type="number" min="1" className="tabular-nums" value={newJar.target_amount} aria-invalid={Boolean(jarForm.formState.errors.target_amount)} onChange={(event) => jarForm.setValue('target_amount', event.target.value, { shouldValidate: true })} />
+                  <Input id="jar-target" type="number" min="1" className="tabular-nums" value={newJar.target_amount ?? ''} aria-invalid={Boolean(jarForm.formState.errors.target_amount)} onChange={(event) => jarForm.setValue('target_amount', event.target.value, { shouldValidate: true })} />
                   {jarForm.formState.errors.target_amount?.message ? <p role="alert" className="text-xs text-red-600">{jarForm.formState.errors.target_amount.message}</p> : null}
                 </div>
                 <Button type="submit" className="h-11 w-full rounded-xl font-semibold">Lưu</Button>
@@ -306,12 +323,14 @@ export default function DebtDetailPage() {
           ) : (
             <div className="space-y-4">
               {jars.map(jar => {
-                const jarProg = getPercentage(jar.saved_amount, jar.target_amount);
+                const targetAmount = Number(jar.planned_amount ?? jar.target_amount) || 0;
+                const savedAmount = Number(jar.actual_paid ?? jar.saved_amount) || 0;
+                const jarProg = getPercentage(savedAmount, targetAmount);
                 return (
                   <div key={jar.id} className="space-y-1">
                     <div className="flex justify-between text-xs">
                       <span className="font-medium">Tháng {jar.month}</span>
-                      <span className="text-muted-foreground tabular-nums">{formatCurrency(jar.saved_amount)} / {formatCurrency(jar.target_amount)}</span>
+                      <span className="text-muted-foreground tabular-nums">{formatCurrency(savedAmount)} / {formatCurrency(targetAmount)}</span>
                     </div>
                     <Progress value={jarProg} className="h-1.5" indicatorColor="bg-rose-500" />
                   </div>
@@ -344,7 +363,7 @@ export default function DebtDetailPage() {
                       <div>
                         <p className="text-sm font-medium">{p.note || "Trả nợ"}</p>
                         <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> {formatDate(p.date)}
+                          <Clock className="w-3 h-3" /> {formatDate(p.payment_date || p.date || '')}
                         </p>
                       </div>
                     </div>

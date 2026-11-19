@@ -31,11 +31,22 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     }
     
     const db = await getDb();
-    const category = await db.execute({
-      sql: 'SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
-      args: [categoryId, user.id],
-    });
+    const [category, existingResult] = await Promise.all([
+      db.execute({
+        sql: 'SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
+        args: [categoryId, user.id],
+      }),
+      db.execute({
+        sql: 'SELECT amount, category_id, expense_date, type FROM expenses WHERE id = ? AND user_id = ?',
+        args: [id, user.id],
+      }),
+    ]);
     if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+    const previous = existingResult.rows[0];
+    if (!previous) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     await db.execute({
       sql: `
         UPDATE expenses 
@@ -59,13 +70,21 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    const budgetAlert = type === 'expense'
+    const sameBucketMonth =
+      previous.type === 'expense'
+      && Number(previous.category_id) === categoryId
+      && String(previous.expense_date).slice(0, 7) === expenseDate.slice(0, 7);
+    const addedDelta = sameBucketMonth
+      ? Math.max(0, amount - (Number(previous.amount) || 0))
+      : amount;
+
+    const budgetAlert = type === 'expense' && addedDelta > 0
       ? await getBudgetAlert({
           db,
           userId: user.id,
           categoryId,
           expenseDate,
-          addedAmount: amount,
+          addedAmount: addedDelta,
         })
       : null;
 
@@ -95,10 +114,14 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     
     const db = await getDb();
-    await db.execute({
+    const deleted = await db.execute({
       sql: 'DELETE FROM expenses WHERE id = ? AND user_id = ?',
       args: [id, user.id]
     });
+
+    if (Number(deleted.rowsAffected) === 0) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
     
     return NextResponse.json({ success: true });
   } catch (error) {

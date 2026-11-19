@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/useToast';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -50,10 +50,10 @@ export function AiProvidersSettings() {
   const [fallbackSource, setFallbackSource] = useState<ProviderResponse['fallbackSource']>('none');
   const [presetIndex, setPresetIndex] = useState('0');
   const providerForm = useForm<ProviderFormValues>({ resolver: zodResolver(providerFormSchema), defaultValues: { label: 'Google Gemini', protocol: 'gemini', base_url: 'https://generativelanguage.googleapis.com/v1beta', api_key: '' } });
-  const label = providerForm.watch('label');
-  const protocol = providerForm.watch('protocol');
-  const baseUrl = providerForm.watch('base_url');
-  const apiKey = providerForm.watch('api_key');
+  const label = useWatch({ control: providerForm.control, name: 'label' });
+  const protocol = useWatch({ control: providerForm.control, name: 'protocol' });
+  const baseUrl = useWatch({ control: providerForm.control, name: 'base_url' });
+  const apiKey = useWatch({ control: providerForm.control, name: 'api_key' });
   const [manualModel, setManualModel] = useState('');
   const [discovered, setDiscovered] = useState<Record<number, DiscoveredModel[]>>({});
   const [selected, setSelected] = useState<Record<number, string[]>>({});
@@ -73,8 +73,24 @@ export function AiProvidersSettings() {
   }, []);
 
   useEffect(() => {
-    loadProviders().catch(() => showToast('Không thể tải cấu hình AI', 'error'));
-  }, [loadProviders, showToast]);
+    let active = true;
+    fetch('/api/ai/providers')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Không thể tải cấu hình AI.');
+        return response.json() as Promise<ProviderResponse>;
+      })
+      .then((data) => {
+        if (!active) return;
+        setProviders(data.providers);
+        setPresets(data.presets);
+        setFallbackAvailable(data.fallbackAvailable);
+        setFallbackSource(data.fallbackSource);
+      })
+      .catch(() => {
+        if (active) showToast('Không thể tải cấu hình AI', 'error');
+      });
+    return () => { active = false; };
+  }, [showToast]);
 
   const changePreset = (value: string) => {
     setPresetIndex(value);
@@ -109,8 +125,8 @@ export function AiProvidersSettings() {
     setBusy(`verify:${provider.id}`);
     try {
       const response = await fetch(`/api/ai/providers/${provider.id}/verify`, { method: 'POST' });
-      const data = await response.json() as { error?: string };
-      if (!response.ok || !data) throw new Error(data.error || 'Không thể kết nối provider.');
+      const data = await response.json() as { success?: boolean; error?: string };
+      if (!response.ok || data.error) throw new Error(data.error || 'Không thể kết nối provider.');
       showToast('Kết nối provider thành công', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Không thể kết nối provider.', 'error');

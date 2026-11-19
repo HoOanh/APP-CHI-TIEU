@@ -1,8 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getDb } from '@/lib/db';
 import { getCurrentUser } from '@/lib/current-user';
 
 interface RouteContext { params: Promise<{ id: string }> }
+
+const updateDebtSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  creditor: z.string().trim().min(1).max(120),
+  total_amount: z.coerce.number().finite().positive(),
+  interest_rate: z.coerce.number().finite().min(0).max(1000).optional().default(0),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  note: z.string().max(500).optional().default(''),
+  status: z.enum(['active', 'completed']).optional(),
+}).refine((val) => isValidCalendarDate(val.start_date) && isValidCalendarDate(val.due_date) && val.due_date >= val.start_date, {
+  message: 'Ngày bắt đầu hoặc hạn trả không hợp lệ.',
+});
+
+function isValidCalendarDate(value: string) {
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
 
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
@@ -36,7 +55,12 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
-    const { name, creditor, total_amount, interest_rate, start_date, due_date, note, status } = await request.json();
+    const rawBody: unknown = await request.json().catch(() => null);
+    const parsed = updateDebtSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Kiểm tra tên, chủ nợ, số tiền và ngày bắt đầu/ngày hạn.' }, { status: 400 });
+    }
+    const { name, creditor, total_amount, interest_rate, start_date, due_date, note, status } = parsed.data;
     const db = await getDb();
     
     await db.execute({
@@ -45,7 +69,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         SET name = ?, creditor = ?, total_amount = ?, interest_rate = ?, start_date = ?, due_date = ?, note = ?, status = COALESCE(?, status)
         WHERE id = ? AND user_id = ?
       `,
-      args: [name, creditor, total_amount, interest_rate, start_date, due_date, note, status, id, user.id]
+      args: [name, creditor, total_amount, interest_rate, start_date, due_date, note.trim(), status ?? null, id, user.id]
     });
     
     const updated = await db.execute({ sql: 'SELECT * FROM debts WHERE id = ? AND user_id = ?', args: [id, user.id] });

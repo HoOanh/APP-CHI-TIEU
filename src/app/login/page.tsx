@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -45,6 +46,10 @@ export default function LoginPage() {
     ? '/chat'
     : '/';
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotStatus, setForgotStatus] = useState<{ type: 'idle' | 'success' | 'error'; message?: string }>({ type: 'idle' });
+  const [isSendingReset, setIsSendingReset] = useState(false);
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { mode: 'login', name: '', email: '', password: '' },
@@ -102,6 +107,39 @@ export default function LoginPage() {
     if (value !== 'login' && value !== 'register') return;
     form.setValue('mode', value);
     form.clearErrors();
+  }
+
+  async function handleForgotPassword(event: React.FormEvent) {
+    event.preventDefault();
+    const normalized = forgotEmail.trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(normalized)) {
+      setForgotStatus({ type: 'error', message: 'Vui lòng nhập email hợp lệ.' });
+      return;
+    }
+    setIsSendingReset(true);
+    setForgotStatus({ type: 'idle' });
+    try {
+      const response = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normalized }),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error || 'Không thể gửi email đặt lại mật khẩu.');
+      }
+      setForgotStatus({
+        type: 'success',
+        message: 'Nếu email tồn tại trong hệ thống, liên kết đặt lại mật khẩu đã được gửi.',
+      });
+    } catch (error) {
+      setForgotStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Không thể gửi email đặt lại mật khẩu.',
+      });
+    } finally {
+      setIsSendingReset(false);
+    }
   }
 
   return (
@@ -211,7 +249,22 @@ export default function LoginPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="login-password">Mật khẩu</Label>
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor="login-password">Mật khẩu</Label>
+                        {!isRegistering ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setForgotEmail(form.getValues('email') || '');
+                              setForgotStatus({ type: 'idle' });
+                              setForgotOpen(true);
+                            }}
+                            className="text-xs font-medium text-emerald-700 hover:underline"
+                          >
+                            Quên mật khẩu?
+                          </button>
+                        ) : null}
+                      </div>
                       <Input
                         id="login-password"
                         autoComplete={isRegistering ? 'new-password' : 'current-password'}
@@ -275,6 +328,45 @@ export default function LoginPage() {
           </Card>
         </section>
       </div>
+
+      <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Quên mật khẩu</DialogTitle>
+            <DialogDescription>
+              Nhập email tài khoản để nhận liên kết đặt lại mật khẩu (hiệu lực 30 phút).
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleForgotPassword}>
+            <div className="space-y-2">
+              <Label htmlFor="forgot-email">Email</Label>
+              <Input
+                id="forgot-email"
+                type="email"
+                placeholder="email@example.com"
+                className="h-11 rounded-xl"
+                value={forgotEmail}
+                onChange={(event) => setForgotEmail(event.target.value)}
+              />
+            </div>
+            {forgotStatus.message ? (
+              <p
+                role="alert"
+                className={
+                  forgotStatus.type === 'error'
+                    ? 'rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive'
+                    : 'rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800'
+                }
+              >
+                {forgotStatus.message}
+              </p>
+            ) : null}
+            <Button type="submit" disabled={isSendingReset} className="h-11 w-full rounded-xl font-semibold">
+              {isSendingReset ? 'Đang gửi…' : 'Gửi liên kết đặt lại'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

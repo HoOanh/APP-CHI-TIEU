@@ -104,9 +104,10 @@ export async function POST(request: NextRequest) {
     }
     const insertResult = await db.execute({
       sql: `
-        INSERT OR IGNORE INTO expenses
+        INSERT INTO expenses
           (user_id, amount, description, note, category_id, expense_date, type, client_request_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
       `,
       args: [user.id, numericAmount, normalizedDescription, typeof note === 'string' ? note.trim() : '', normalizedCategoryId, finalDate, normalizedType, clientRequestId]
     });

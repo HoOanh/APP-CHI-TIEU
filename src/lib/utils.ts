@@ -10,18 +10,43 @@ export function formatCurrency(amount: number): string {
   return Math.round(amount).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.') + 'đ';
 }
 
+function parseIsoDateParts(date: string): [number, number, number] | null {
+  const match = date.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T)/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (
+    check.getUTCFullYear() !== year
+    || check.getUTCMonth() !== month - 1
+    || check.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return [year, month, day];
+}
+
 export function formatDate(date: string): string {
   if (!date) return '';
+  const parts = parseIsoDateParts(date);
+  if (parts) {
+    return `${String(parts[2]).padStart(2, '0')}/${String(parts[1]).padStart(2, '0')}/${parts[0]}`;
+  }
   const d = new Date(date);
   if (isNaN(d.getTime())) return date;
-  return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+  return `${d.getUTCDate().toString().padStart(2, '0')}/${(d.getUTCMonth() + 1).toString().padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
 export function formatShortDate(date: string): string {
   if (!date) return '';
+  const parts = parseIsoDateParts(date);
+  if (parts) {
+    return `${String(parts[2]).padStart(2, '0')}/${String(parts[1]).padStart(2, '0')}`;
+  }
   const d = new Date(date);
   if (isNaN(d.getTime())) return date;
-  return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+  return `${d.getUTCDate().toString().padStart(2, '0')}/${(d.getUTCMonth() + 1).toString().padStart(2, '0')}`;
 }
 
 export function getCurrentMonth(): string {
