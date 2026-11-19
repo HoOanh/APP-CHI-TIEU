@@ -3,7 +3,7 @@
   "version": "1.2.2",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --port 8080",
     "build": "next build",
     "analyze": "next experimental-analyze --output",
     "start": "next start",

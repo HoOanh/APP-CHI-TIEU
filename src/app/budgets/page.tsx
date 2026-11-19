@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   AlertDialog,
@@ -68,6 +69,7 @@ import {
   FileJson2,
   Upload,
   ChevronDown,
+  Sparkles,
 } from 'lucide-react';
 
 interface Category {
@@ -105,6 +107,10 @@ interface Budget {
   budget_basis: 'monthly' | 'daily';
   daily_amount: number;
   budget_days: number;
+  rollover_enabled?: number;
+  rollover_mode?: 'positive_only' | 'all';
+  rollover_amount?: number;
+  effective_budget?: number;
   alerts: BudgetAlert[];
 }
 
@@ -118,6 +124,8 @@ const budgetFormSchema = z.object({
   daily_limit: z.string(),
   frequency_limit: z.string(),
   frequency_period: z.string(),
+  rollover_enabled: z.boolean(),
+  rollover_mode: z.enum(['positive_only', 'all']),
 }).superRefine((value, context) => {
   if (value.budget_basis === 'monthly' && parseMoneyInput(value.budget_amount) <= 0) context.addIssue({ code: 'custom', path: ['budget_amount'], message: 'Nhập ngân sách lớn hơn 0' });
   if (value.budget_basis === 'daily') {
@@ -142,6 +150,10 @@ export default function BudgetsPage() {
   const [isImporting, setIsImporting] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [isSplitOpen, setIsSplitOpen] = useState(false);
+  const [splitIncome, setSplitIncome] = useState('15.000.000');
+  const [splitAllocations, setSplitAllocations] = useState<Record<string, string>>({});
+  const [isSplitting, setIsSplitting] = useState(false);
   const { showToast } = useToast();
 
   const budgetForm = useForm<BudgetFormValues>({
@@ -157,6 +169,8 @@ export default function BudgetsPage() {
     daily_limit: '',
     frequency_limit: '',
     frequency_period: '',
+    rollover_enabled: false,
+    rollover_mode: 'positive_only',
     },
   });
   const watchedForm = useWatch({ control: budgetForm.control });
@@ -170,6 +184,8 @@ export default function BudgetsPage() {
     daily_limit: watchedForm.daily_limit ?? '',
     frequency_limit: watchedForm.frequency_limit ?? '',
     frequency_period: watchedForm.frequency_period ?? '',
+    rollover_enabled: Boolean(watchedForm.rollover_enabled),
+    rollover_mode: watchedForm.rollover_mode === 'all' ? 'all' : 'positive_only',
   };
   const setFormData = (updater: (previous: BudgetFormValues) => BudgetFormValues) => {
     const next = updater(budgetForm.getValues());
@@ -187,6 +203,8 @@ export default function BudgetsPage() {
       daily_limit: '',
       frequency_limit: '',
       frequency_period: '',
+      rollover_enabled: false,
+      rollover_mode: 'positive_only',
     });
     setEditingBudget(null);
     setIsAdvancedOpen(false);
@@ -258,7 +276,7 @@ export default function BudgetsPage() {
     useMemo(() => {
       const totals = budgets.reduce(
         (result, budget) => ({
-          totalBudget: result.totalBudget + budget.budget_amount,
+          totalBudget: result.totalBudget + Math.max(0, budget.effective_budget ?? (budget.budget_amount + (budget.rollover_amount ?? 0))),
           totalSpent: result.totalSpent + budget.spent_amount,
         }),
         { totalBudget: 0, totalSpent: 0 },
@@ -288,8 +306,10 @@ export default function BudgetsPage() {
         ? String(budget.frequency_limit)
         : '',
       frequency_period: budget.frequency_period || '',
+      rollover_enabled: Number(budget.rollover_enabled) === 1,
+      rollover_mode: budget.rollover_mode === 'all' ? 'all' : 'positive_only',
     });
-    setIsAdvancedOpen(Boolean(budget.daily_limit || budget.frequency_limit));
+    setIsAdvancedOpen(Boolean(budget.daily_limit || budget.frequency_limit || budget.rollover_enabled));
     setIsDialogOpen(true);
   };
 
@@ -320,6 +340,8 @@ export default function BudgetsPage() {
           daily_limit: parseMoneyInput(values.daily_limit),
           frequency_limit: Number(values.frequency_limit) || 0,
           frequency_period: values.frequency_period || '',
+          rollover_enabled: values.rollover_enabled,
+          rollover_mode: values.rollover_mode,
         }),
       });
 
@@ -401,6 +423,35 @@ export default function BudgetsPage() {
       );
     } finally {
       setIsImporting(false);
+    }
+  };
+
+  const handlePaydaySplit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const totalIncomeAmount = parseMoneyInput(splitIncome);
+    const allocations = Object.entries(splitAllocations)
+      .map(([category_id, pct]) => ({ category_id: Number(category_id), percent: Number(pct) || 0 }))
+      .filter((item) => item.percent > 0);
+    if (totalIncomeAmount <= 0 || allocations.length === 0) {
+      showToast('Nhập thu nhập và phân bổ ít nhất 1 danh mục > 0%', 'error');
+      return;
+    }
+    setIsSplitting(true);
+    try {
+      const response = await fetch('/api/budgets/payday-split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ totalIncomeAmount, month, mode: 'add', allocations }),
+      });
+      const data = await response.json() as { error?: string; applied?: unknown[] };
+      if (!response.ok) throw new Error(data.error || 'Chia hũ thất bại');
+      showToast(`Đã phân bổ thu nhập vào ${data.applied?.length ?? allocations.length} hũ`, 'success');
+      setIsSplitOpen(false);
+      fetchBudgets();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Lỗi chia hũ', 'error');
+    } finally {
+      setIsSplitting(false);
     }
   };
 
@@ -491,6 +542,15 @@ export default function BudgetsPage() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setIsSplitOpen(true)}
+              className="rounded-xl h-8 text-xs font-medium border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+            >
+              <Sparkles className="w-3 h-3 mr-1.5" />
+              Chia hũ lương
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setIsImportOpen(true)}
               className="rounded-xl h-8 text-xs font-medium border-border"
             >
@@ -562,9 +622,10 @@ export default function BudgetsPage() {
 
           <div className="grid gap-4 lg:grid-cols-2 xl:hidden">
             {budgets.map((budget) => {
+              const effectiveBudget = Math.max(0, budget.effective_budget ?? (budget.budget_amount + (budget.rollover_amount ?? 0)));
               const pct = getPercentage(
                 budget.spent_amount,
-                budget.budget_amount,
+                effectiveBudget,
               );
               const effectiveDailyLimit = budget.daily_limit > 0
                 ? budget.daily_limit
@@ -602,8 +663,13 @@ export default function BudgetsPage() {
                           <p className="font-semibold text-foreground">{budget.category_name}</p>
                           <p className="text-xs text-muted-foreground tabular-nums">
                             {formatCurrency(budget.spent_amount)} /{' '}
-                            {formatCurrency(budget.budget_amount)}
+                            {formatCurrency(Math.max(0, budget.effective_budget ?? (budget.budget_amount + (budget.rollover_amount ?? 0))))}
                           </p>
+                          {budget.rollover_amount ? (
+                            <p className={cn('mt-0.5 text-[11px] font-medium', budget.rollover_amount > 0 ? 'text-emerald-700' : 'text-rose-600')}>
+                              {budget.rollover_amount > 0 ? `+${formatCurrency(budget.rollover_amount)} dư tháng trước` : `${formatCurrency(budget.rollover_amount)} bù tháng trước`}
+                            </p>
+                          ) : null}
                           {budget.budget_basis === 'daily' ? <p className={cn('mt-1 text-[11px] font-medium', isDailyOver ? 'text-rose-600' : 'text-blue-600')}>{formatCurrency(budget.daily_amount)} / ngày × {budget.budget_days} ngày</p> : null}
                         </div>
                       </div>
@@ -981,6 +1047,42 @@ export default function BudgetsPage() {
                       </div>
                     </div>
                   </div>
+                  <div className="space-y-2.5 border-t border-border pt-3">
+                    <label className="flex cursor-pointer items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold text-foreground">Chuyển số dư sang tháng sau (Rollover)</p>
+                        <p className="text-[11px] text-muted-foreground">Khi sao chép hũ sang tháng mới, tự cộng/trừ phần còn dư.</p>
+                      </div>
+                      <Switch
+                        checked={formData.rollover_enabled}
+                        onCheckedChange={(checked) => setFormData((prev) => ({ ...prev, rollover_enabled: checked }))}
+                      />
+                    </label>
+                    {formData.rollover_enabled ? (
+                      <div className="grid grid-cols-2 gap-1.5 rounded-xl bg-muted/40 p-1 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setFormData((prev) => ({ ...prev, rollover_mode: 'positive_only' }))}
+                          className={cn(
+                            'rounded-lg py-1.5 font-medium transition',
+                            formData.rollover_mode === 'positive_only' ? 'bg-white text-emerald-700 shadow-xs' : 'text-muted-foreground',
+                          )}
+                        >
+                          Chỉ giữ phần dư (+)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormData((prev) => ({ ...prev, rollover_mode: 'all' }))}
+                          className={cn(
+                            'rounded-lg py-1.5 font-medium transition',
+                            formData.rollover_mode === 'all' ? 'bg-white text-amber-700 shadow-xs' : 'text-muted-foreground',
+                          )}
+                        >
+                          Gồm cả vượt lố (−/+)
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </CollapsiblePrimitive.Content>
               </CollapsiblePrimitive.Root>
             </div>
@@ -1056,6 +1158,54 @@ export default function BudgetsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={isSplitOpen} onOpenChange={setIsSplitOpen}>
+        <DialogContent className="max-h-[90dvh] max-w-md overflow-y-auto rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Chia hũ từ thu nhập (Payday Split)</DialogTitle>
+            <DialogDescription className="text-xs">
+              Nhập số tiền thu nhập vừa nhận và chia tỷ lệ (%) vào các hũ ngân sách tháng {month}.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handlePaydaySplit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="payday-income">Số tiền thu nhập muốn chia (VND)</Label>
+              <Input
+                id="payday-income"
+                inputMode="numeric"
+                value={splitIncome}
+                onChange={(e) => setSplitIncome(formatMoneyInput(e.target.value))}
+                className="h-10 rounded-xl tabular-nums"
+              />
+            </div>
+            <div className="max-h-60 space-y-2 overflow-y-auto pr-1">
+              {categories
+                .filter((cat) => cat.name !== 'Thu nhập')
+                .map((cat) => (
+                  <div key={cat.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2 text-xs">
+                    <span className="font-medium text-slate-800">{cat.name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="1"
+                        placeholder="0"
+                        value={splitAllocations[cat.id] ?? ''}
+                        onChange={(e) => setSplitAllocations((prev) => ({ ...prev, [cat.id]: e.target.value }))}
+                        className="h-8 w-20 rounded-lg text-right tabular-nums"
+                      />
+                      <span className="text-slate-500">%</span>
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <Button type="submit" disabled={isSplitting} className="h-11 w-full rounded-xl font-semibold">
+              {isSplitting ? 'Đang phân bổ…' : 'Áp dụng vào hũ tháng này'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1082,7 +1232,8 @@ function BudgetTable({ budgets, onEdit, onDelete }: { budgets: Budget[]; onEdit:
           </thead>
           <tbody className="divide-y divide-border">
             {budgets.map((budget) => {
-              const pct = getPercentage(budget.spent_amount, budget.budget_amount);
+              const effectiveBudget = Math.max(0, budget.effective_budget ?? (budget.budget_amount + (budget.rollover_amount ?? 0)));
+              const pct = getPercentage(budget.spent_amount, effectiveBudget);
               const effectiveDailyLimit = budget.daily_limit > 0
                 ? budget.daily_limit
                 : budget.budget_basis === 'daily'
@@ -1123,7 +1274,14 @@ function BudgetTable({ budgets, onEdit, onDelete }: { budgets: Budget[]; onEdit:
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-4 font-medium tabular-nums text-foreground">{formatCurrency(budget.spent_amount)}</td>
-                  <td className="whitespace-nowrap px-4 py-4 tabular-nums text-muted-foreground">{formatCurrency(budget.budget_amount)}</td>
+                  <td className="whitespace-nowrap px-4 py-4 tabular-nums text-muted-foreground">
+                    <span>{formatCurrency(Math.max(0, budget.effective_budget ?? (budget.budget_amount + (budget.rollover_amount ?? 0))))}</span>
+                    {budget.rollover_amount ? (
+                      <span className={cn('block text-[11px]', budget.rollover_amount > 0 ? 'text-emerald-700' : 'text-rose-600')}>
+                        {budget.rollover_amount > 0 ? `+${formatCurrency(budget.rollover_amount)} dư` : `${formatCurrency(budget.rollover_amount)}`}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="min-w-48 px-4 py-4">
                     <div className="flex items-center gap-3">
                       <Progress value={isDailyOver && pct < 100 ? 100 : pct} className="h-2 flex-1" indicatorColor={tone.replace('text-', 'bg-')} />

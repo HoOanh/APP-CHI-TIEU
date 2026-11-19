@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { evaluateBudgetJar } from '@/lib/budget-evaluator';
 import { getCurrentUser } from '@/lib/current-user';
+import { getDb } from '@/lib/db';
+import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 import { getVietnamToday } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
@@ -54,113 +56,48 @@ export async function GET(request: NextRequest) {
             WHERE b.user_id = ? AND b.month = ?
             GROUP BY b.id, c.name, c.icon, c.color
             ORDER BY c.name`,
-      args: [
-        today,
-        today,
-        weekStartStr,
-        weekEndStr,
-        user.id,
-        month,
-      ],
+      args: [today, today, weekStartStr, weekEndStr, user.id, month],
     });
 
     const enriched = result.rows.map((budget) => {
-      const explicitDailyLimit = Number(budget.daily_limit) || 0;
-      const dailyLimit = explicitDailyLimit > 0
-        ? explicitDailyLimit
-        : budget.budget_basis === 'daily'
-          ? Number(budget.daily_amount) || 0
-          : 0;
-      const freqLimit = Number(budget.frequency_limit) || 0;
-      const freqPeriod = (budget.frequency_period as string) || '';
       const todaySpent = Number(budget.today_spent) || 0;
       const todayCount = Number(budget.today_count) || 0;
       const weekCount = Number(budget.week_count) || 0;
       const monthCount = Number(budget.month_count) || 0;
 
-      // Build alerts
-      const alerts: { type: string; title: string; message: string; severity: 'warning' | 'danger' }[] = [];
-      const budgetAmount = Number(budget.budget_amount) || 0;
-      const spentAmount = Number(budget.spent_amount) || 0;
-      const warningPercent = Number(budget.warning_percent) || 80;
-      const percentage = budgetAmount > 0 ? (spentAmount / budgetAmount) * 100 : 0;
-      const isCurrentMonth = String(budget.month) === today.slice(0, 7);
-      const daysLeft = isCurrentMonth
-        ? Math.max(1, new Date(Date.UTC(todayYear, todayMonth, 0)).getUTCDate() - todayDay + 1)
-        : 0;
-
-      if (percentage >= 100) {
-        alerts.push({
-          type: 'monthly_budget',
-          title: '🚨 Đã vượt ngân sách tháng',
-          message: spentAmount > budgetAmount
-            ? `Đã lố ${formatNum(spentAmount - budgetAmount)}đ (${formatNum(spentAmount)}đ / ${formatNum(budgetAmount)}đ). Tạm dừng chi ở hũ này ngay!`
-            : `Đã chạm kịch trần 100% ngân sách tháng (${formatNum(budgetAmount)}đ).`,
-          severity: 'danger',
-        });
-      } else if (percentage >= warningPercent) {
-        const remaining = budgetAmount - spentAmount;
-        alerts.push({
-          type: 'monthly_budget',
-          title: `Đã dùng ${Math.round(percentage)}% ngân sách tháng`,
-          message: daysLeft
-            ? `Còn ${formatNum(remaining)}đ · nên chi tối đa ${formatNum(Math.round(remaining / daysLeft))}đ/ngày trong ${daysLeft} ngày tới.`
-            : `Còn ${formatNum(remaining)}đ trước khi chạm trần ngân sách.`,
-          severity: 'warning',
-        });
-      }
-
-      if (dailyLimit > 0 && todaySpent > dailyLimit) {
-        alerts.push({
-          type: 'daily_limit',
-          title: '🚨 Chi lố hạn mức ngày hôm nay!',
-          message: `Hôm nay đã chi ${formatNum(todaySpent)}đ / định mức ${formatNum(dailyLimit)}đ/ngày (vượt lố ${formatNum(todaySpent - dailyLimit)}đ). Dừng chi hũ này trong hôm nay!`,
-          severity: 'danger',
-        });
-      } else if (dailyLimit > 0 && todaySpent === dailyLimit) {
-        alerts.push({
-          type: 'daily_limit',
-          title: '⚠️ Đã chạm kịch trần chi tiêu hôm nay',
-          message: `Hôm nay đã chi hết ${formatNum(todaySpent)}đ / ${formatNum(dailyLimit)}đ. Chi thêm sẽ bị lố hạn mức ngày!`,
-          severity: 'warning',
-        });
-      } else if (dailyLimit > 0 && todaySpent >= dailyLimit * 0.8) {
-        alerts.push({
-          type: 'daily_limit',
-          title: 'Sắp chạm hạn mức ngày hôm nay',
-          message: `Hôm nay đã chi ${formatNum(todaySpent)}đ, chỉ còn ${formatNum(dailyLimit - todaySpent)}đ trong định mức ${formatNum(dailyLimit)}đ/ngày.`,
-          severity: 'warning',
-        });
-      }
-
-      if (freqLimit > 0 && freqPeriod) {
-        const currentCount = freqPeriod === 'day' ? todayCount : freqPeriod === 'week' ? weekCount : monthCount;
-        const periodLabel = freqPeriod === 'day' ? 'hôm nay' : freqPeriod === 'week' ? 'tuần này' : 'tháng này';
-
-        if (currentCount >= freqLimit) {
-          alerts.push({
-            type: 'frequency',
-            title: 'Đã dùng hết lượt chi',
-            message: `${currentCount}/${freqLimit} lần ${periodLabel}. Hãy cân nhắc dời giao dịch tiếp theo.`,
-            severity: 'danger',
-          });
-        } else if (currentCount >= freqLimit - 1) {
-          alerts.push({
-            type: 'frequency',
-            title: 'Còn một lượt chi',
-            message: `Đã dùng ${currentCount}/${freqLimit} lần ${periodLabel}.`,
-            severity: 'warning',
-          });
-        }
-      }
+      const evaluated = evaluateBudgetJar(
+        {
+          id: String(budget.id),
+          category_name: String(budget.category_name || ''),
+          month: String(budget.month),
+          budget_amount: Number(budget.budget_amount) || 0,
+          rollover_amount: Number(budget.rollover_amount) || 0,
+          budget_basis: String(budget.budget_basis || 'monthly'),
+          daily_amount: Number(budget.daily_amount) || 0,
+          daily_limit: Number(budget.daily_limit) || 0,
+          warning_percent: Number(budget.warning_percent) || 80,
+          frequency_limit: Number(budget.frequency_limit) || 0,
+          frequency_period: String(budget.frequency_period || ''),
+          spent_amount: Number(budget.spent_amount) || 0,
+          today_spent: todaySpent,
+          today_count: todayCount,
+          week_count: weekCount,
+          month_count: monthCount,
+        },
+        today,
+      );
 
       return {
         ...budget,
+        rollover_enabled: Number(budget.rollover_enabled) || 0,
+        rollover_mode: budget.rollover_mode === 'all' ? 'all' : 'positive_only',
+        rollover_amount: Number(budget.rollover_amount) || 0,
+        effective_budget: evaluated.effectiveBudget,
         today_spent: todaySpent,
         today_count: todayCount,
         week_count: weekCount,
         month_count: monthCount,
-        alerts,
+        alerts: evaluated.alerts,
       };
     });
 
@@ -169,10 +106,6 @@ export async function GET(request: NextRequest) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch budgets' }, { status: 500 });
   }
-}
-
-function formatNum(n: number): string {
-  return new Intl.NumberFormat('vi-VN').format(n);
 }
 
 export async function POST(request: NextRequest) {
@@ -196,34 +129,113 @@ export async function POST(request: NextRequest) {
     const dailyLimit = Math.max(0, Number(body.daily_limit) || 0);
     const frequencyLimit = Math.max(0, Number(body.frequency_limit) || 0);
     const frequencyPeriod = typeof body.frequency_period === 'string' ? body.frequency_period : '';
-    if (!Number.isInteger(categoryId) || categoryId <= 0 || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !Number.isFinite(budgetAmount) || budgetAmount <= 0 || (budgetBasis === 'daily' && (!Number.isFinite(dailyAmount) || dailyAmount <= 0 || !Number.isInteger(budgetDays) || budgetDays < 1 || budgetDays > monthDays))) {
+    const rolloverEnabled = body.rollover_enabled === true || Number(body.rollover_enabled) === 1 ? 1 : 0;
+    const rolloverMode = body.rollover_mode === 'all' ? 'all' : 'positive_only';
+
+    if (
+      !Number.isInteger(categoryId)
+      || categoryId <= 0
+      || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+      || !Number.isFinite(budgetAmount)
+      || budgetAmount <= 0
+      || (budgetBasis === 'daily' && (!Number.isFinite(dailyAmount) || dailyAmount <= 0 || !Number.isInteger(budgetDays) || budgetDays < 1 || budgetDays > monthDays))
+    ) {
       return NextResponse.json({ error: 'Kiểm tra danh mục, tháng, số tiền và số ngày ngân sách.' }, { status: 400 });
     }
     const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
     const category = await db.execute({
       sql: "SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?) AND kind <> 'income'",
       args: [categoryId, user.id],
     });
     if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục chi tiêu không hợp lệ.' }, { status: 400 });
-    
+
     const existingResult = await db.execute({
       sql: 'SELECT id FROM budget_jars WHERE user_id = ? AND category_id = ? AND month = ?',
       args: [user.id, categoryId, month],
     });
-    
+
     if (existingResult.rows.length > 0) {
       const existingId = existingResult.rows[0].id;
-      await db.execute({ 
-        sql: 'UPDATE budget_jars SET budget_amount = ?, budget_basis = ?, daily_amount = ?, budget_days = ?, warning_percent = ?, daily_limit = ?, frequency_limit = ?, frequency_period = ? WHERE id = ? AND user_id = ?',
-        args: [budgetAmount, budgetBasis, budgetBasis === 'daily' ? dailyAmount : 0, budgetBasis === 'daily' ? budgetDays : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod, existingId, user.id]
+      await db.execute({
+        sql: `UPDATE budget_jars
+              SET ledger_id = COALESCE(ledger_id, ?),
+                  budget_amount = ?, budget_basis = ?, daily_amount = ?, budget_days = ?,
+                  warning_percent = ?, daily_limit = ?, frequency_limit = ?, frequency_period = ?,
+                  rollover_enabled = ?, rollover_mode = ?
+              WHERE id = ? AND user_id = ?`,
+        args: [
+          ledgerId,
+          budgetAmount,
+          budgetBasis,
+          budgetBasis === 'daily' ? dailyAmount : 0,
+          budgetBasis === 'daily' ? budgetDays : 0,
+          warningPercent,
+          dailyLimit,
+          frequencyLimit,
+          frequencyPeriod,
+          rolloverEnabled,
+          rolloverMode,
+          existingId,
+          user.id,
+        ],
       });
-      return NextResponse.json({ id: existingId, category_id: categoryId, month, budget_amount: budgetAmount, budget_basis: budgetBasis, daily_amount: budgetBasis === 'daily' ? dailyAmount : 0, budget_days: budgetBasis === 'daily' ? budgetDays : 0, warning_percent: warningPercent, daily_limit: dailyLimit, frequency_limit: frequencyLimit, frequency_period: frequencyPeriod });
+      return NextResponse.json({
+        id: existingId,
+        category_id: categoryId,
+        month,
+        budget_amount: budgetAmount,
+        budget_basis: budgetBasis,
+        daily_amount: budgetBasis === 'daily' ? dailyAmount : 0,
+        budget_days: budgetBasis === 'daily' ? budgetDays : 0,
+        warning_percent: warningPercent,
+        daily_limit: dailyLimit,
+        frequency_limit: frequencyLimit,
+        frequency_period: frequencyPeriod,
+        rollover_enabled: rolloverEnabled,
+        rollover_mode: rolloverMode,
+      });
     } else {
-      const info = await db.execute({ 
-        sql: 'INSERT INTO budget_jars (user_id, category_id, month, budget_amount, budget_basis, daily_amount, budget_days, warning_percent, daily_limit, frequency_limit, frequency_period) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        args: [user.id, categoryId, month, budgetAmount, budgetBasis, budgetBasis === 'daily' ? dailyAmount : 0, budgetBasis === 'daily' ? budgetDays : 0, warningPercent, dailyLimit, frequencyLimit, frequencyPeriod]
+      const info = await db.execute({
+        sql: `INSERT INTO budget_jars
+                (user_id, ledger_id, category_id, month, budget_amount, budget_basis, daily_amount, budget_days,
+                 warning_percent, daily_limit, frequency_limit, frequency_period, rollover_enabled, rollover_mode)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          user.id,
+          ledgerId,
+          categoryId,
+          month,
+          budgetAmount,
+          budgetBasis,
+          budgetBasis === 'daily' ? dailyAmount : 0,
+          budgetBasis === 'daily' ? budgetDays : 0,
+          warningPercent,
+          dailyLimit,
+          frequencyLimit,
+          frequencyPeriod,
+          rolloverEnabled,
+          rolloverMode,
+        ],
       });
-      return NextResponse.json({ id: Number(info.lastInsertRowid), category_id: categoryId, month, budget_amount: budgetAmount, budget_basis: budgetBasis, daily_amount: budgetBasis === 'daily' ? dailyAmount : 0, budget_days: budgetBasis === 'daily' ? budgetDays : 0, warning_percent: warningPercent, daily_limit: dailyLimit, frequency_limit: frequencyLimit, frequency_period: frequencyPeriod }, { status: 201 });
+      return NextResponse.json(
+        {
+          id: Number(info.lastInsertRowid),
+          category_id: categoryId,
+          month,
+          budget_amount: budgetAmount,
+          budget_basis: budgetBasis,
+          daily_amount: budgetBasis === 'daily' ? dailyAmount : 0,
+          budget_days: budgetBasis === 'daily' ? budgetDays : 0,
+          warning_percent: warningPercent,
+          daily_limit: dailyLimit,
+          frequency_limit: frequencyLimit,
+          frequency_period: frequencyPeriod,
+          rollover_enabled: rolloverEnabled,
+          rollover_mode: rolloverMode,
+        },
+        { status: 201 },
+      );
     }
   } catch (error) {
     console.error(error);

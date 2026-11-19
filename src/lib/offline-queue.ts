@@ -20,9 +20,18 @@ export interface QueuedTransaction extends OfflineQueueBase {
   values: OfflineTransactionValues;
 }
 
+export interface OfflineAiAttachment {
+  name: string;
+  type: string;
+  blob: Blob;
+}
+
 export interface QueuedAiNote extends OfflineQueueBase {
   kind: 'ai_note';
   message: string;
+  mode?: 'auto' | 'debt';
+  accountId?: string | null;
+  attachments?: OfflineAiAttachment[];
 }
 
 export type OfflineQueueEntry = QueuedTransaction | QueuedAiNote;
@@ -87,12 +96,27 @@ export async function queueOfflineTransaction(
   return entry;
 }
 
-export async function queueOfflineAiNote(message: string): Promise<QueuedAiNote> {
+export async function queueOfflineAiNote(
+  message: string,
+  options?: {
+    files?: File[];
+    mode?: 'auto' | 'debt';
+    accountId?: string | null;
+  },
+): Promise<QueuedAiNote> {
+  const attachments: OfflineAiAttachment[] = (options?.files ?? []).map((file) => ({
+    name: file.name || 'receipt.jpg',
+    type: file.type || 'image/jpeg',
+    blob: file.slice(0, file.size, file.type || 'image/jpeg'),
+  }));
   const entry: QueuedAiNote = {
     id: createId(),
     kind: 'ai_note',
     createdAt: new Date().toISOString(),
     message: message.trim(),
+    mode: options?.mode ?? 'auto',
+    accountId: options?.accountId ?? null,
+    attachments: attachments.length ? attachments : undefined,
   };
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {
@@ -148,22 +172,45 @@ async function syncQueue(): Promise<{ synced: number; failed: number }> {
   let failed = 0;
 
   for (const entry of entries) {
-    if (entry.kind !== 'transaction') continue;
     try {
-      const response = await fetch('/api/expenses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...entry.values, client_request_id: entry.id }),
-      });
-      if (response.ok) {
-        await removeOfflineQueueEntry(entry.id);
-        synced += 1;
-      } else {
-        failed += 1;
-        if (response.status === 401) break;
-        await setEntryError(entry.id, response.status === 400
-          ? 'Danh mục hoặc dữ liệu giao dịch cần kiểm tra.'
-          : 'Chưa đồng bộ được. Sẽ thử lại khi có mạng.');
+      if (entry.kind === 'transaction') {
+        const response = await fetch('/api/expenses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...entry.values, client_request_id: entry.id }),
+        });
+        if (response.ok) {
+          await removeOfflineQueueEntry(entry.id);
+          synced += 1;
+        } else {
+          failed += 1;
+          if (response.status === 401) break;
+          await setEntryError(entry.id, response.status === 400
+            ? 'Danh mục hoặc dữ liệu giao dịch cần kiểm tra.'
+            : 'Chưa đồng bộ được. Sẽ thử lại khi có mạng.');
+        }
+        continue;
+      }
+
+      if (entry.kind === 'ai_note') {
+        const formData = new FormData();
+        formData.append('type', entry.mode === 'debt' ? 'debt' : 'expense');
+        formData.append('mode', entry.mode ?? 'auto');
+        formData.append('client_request_id', entry.id);
+        if (entry.accountId) formData.append('account_id', entry.accountId);
+        if (entry.message) formData.append('message', entry.message);
+        for (const attachment of entry.attachments ?? []) {
+          formData.append('images', new File([attachment.blob], attachment.name, { type: attachment.type }));
+        }
+        const response = await fetch('/api/chat', { method: 'POST', body: formData });
+        if (response.ok) {
+          await removeOfflineQueueEntry(entry.id);
+          synced += 1;
+        } else {
+          failed += 1;
+          if (response.status === 401) break;
+          await setEntryError(entry.id, 'Chưa xử lý được ghi chú AI. Mở Chat để kiểm tra lại.');
+        }
       }
     } catch {
       failed += 1;

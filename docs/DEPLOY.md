@@ -45,8 +45,8 @@ Tài liệu này hướng dẫn cách deploy ứng dụng Chi Tiêu Manager lên
 4. Vào menu **Credentials** > Chọn **Create Credentials** > **OAuth client ID**.
    - Application type: **Web application**.
    - Name: `Chi Tieu Manager App`.
-   - **Authorized JavaScript origins**: `http://localhost:3000` (để test local) và `https://your-app-domain.vercel.app` (URL thật sau khi deploy).
-   - **Authorized redirect URIs**: `http://localhost:3000/api/auth/callback/google` và `https://your-app-domain.vercel.app/api/auth/callback/google`.
+   - **Authorized JavaScript origins**: `http://localhost:8080` (để test local) và `https://your-app-domain.vercel.app` (URL thật sau khi deploy).
+   - **Authorized redirect URIs**: `http://localhost:8080/api/auth/callback/google` và `https://your-app-domain.vercel.app/api/auth/callback/google`.
 5. Bấm **Create**. Bạn sẽ nhận được **Client ID** và **Client Secret**. Lưu lại.
 
 ---

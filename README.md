@@ -43,7 +43,7 @@ cp .env.example .env
 | `TURSO_DATABASE_URL` | Có | URL kết nối đến database Turso |
 | `TURSO_AUTH_TOKEN` | Có | Token xác thực Turso |
 | `GEMINI_API_KEY` | Có | API Key từ Google AI Studio |
-| `NEXTAUTH_URL` | Có | URL của ứng dụng (vd: http://localhost:3000) |
+| `NEXTAUTH_URL` | Có | URL của ứng dụng (vd: http://localhost:8080) |
 | `NEXTAUTH_SECRET` | Có | Khóa bí mật cho NextAuth (tạo ngẫu nhiên) |
 | `GOOGLE_CLIENT_ID` | Không | Client ID cho Google OAuth (tùy chọn) |
 | `GOOGLE_CLIENT_SECRET` | Không | Client Secret cho Google OAuth (tùy chọn) |
@@ -52,7 +52,7 @@ cp .env.example .env
 ```bash
 pnpm dev
 ```
-Truy cập `http://localhost:3000` để xem ứng dụng.
+Truy cập `http://localhost:8080` để xem ứng dụng.
 
 ## 📚 Tài liệu
 - [Yêu cầu nghiệp vụ (BRD)](./docs/BRD.md)

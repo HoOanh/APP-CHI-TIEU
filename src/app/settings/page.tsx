@@ -50,7 +50,9 @@ import { CategoryIcon } from '@/components/CategoryIcon';
 import Link from 'next/link';
 import { clearPwaCache } from '@/lib/pwa-cache';
 import { AccountsManager } from '@/components/AccountsManager';
+import { ImportExportManager } from '@/components/ImportExportManager';
 import { ProfileModulesSettings } from '@/components/ProfileModulesSettings';
+import { RecurringRulesManager } from '@/components/RecurringRulesManager';
 import { ShortcutsSettings } from '@/components/ShortcutsSettings';
 import type { EnabledModules, PersonaId } from '@/lib/modules';
 
@@ -465,6 +467,8 @@ export default function SettingsPage() {
 
       <ShortcutsSettings key={`shortcuts-${dataRevision}`} />
 
+      <RecurringRulesManager key={`recurring-${dataRevision}`} />
+
       <div id="nhac-nho" className="scroll-mt-6"><PwaReminderSettings key={dataRevision} /></div>
 
       <div className="grid gap-6">
@@ -593,6 +597,7 @@ export default function SettingsPage() {
             >
               <Download className="size-4" /> Xuất toàn bộ dữ liệu JSON
             </Button>
+            <ImportExportManager onRestored={() => setDataRevision((v) => v + 1)} />
             <div className="flex flex-col gap-3 border-t border-border pt-4 sm:col-span-full sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs leading-relaxed text-muted-foreground">
                 Làm sạch dữ liệu đã lưu trên tài khoản và tiếp tục dùng cùng tài khoản đăng nhập.
