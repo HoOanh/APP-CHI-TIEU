@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
+import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 import { getVietnamToday } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
@@ -11,50 +12,127 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+
     const searchParams = request.nextUrl.searchParams;
     const month = searchParams.get('month');
-    const category_id = searchParams.get('category_id');
-    const search = searchParams.get('search');
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    const typeFilter = searchParams.get('type');
+    const accountIdParam = searchParams.get('account_id');
+    const categoryId = searchParams.get('category_id');
+    const search = searchParams.get('search')?.trim();
+    const cursor = searchParams.get('cursor');
+    const limitRaw = Number(searchParams.get('limit') || 50);
+    const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 50;
 
-    let query = `
-      SELECT e.id, e.amount, e.description, e.note, e.category_id, e.expense_date, e.type, e.created_at, c.name as category_name, c.icon as category_icon, c.color as category_color 
-      FROM expenses e 
-      LEFT JOIN categories c ON e.category_id = c.id 
-      WHERE e.user_id = ?
-    `;
-    const params: (string | number)[] = [user.id];
+    let whereSql = 'WHERE (e.ledger_id = ? OR (e.ledger_id IS NULL AND e.user_id = ?))';
+    const whereArgs: Array<string | number> = [ledgerId, user.id];
 
-    if (month) {
+    if (month && month !== 'all') {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return NextResponse.json({ error: 'Tháng không hợp lệ.' }, { status: 400 });
+      }
       const [year, value] = month.split('-').map(Number);
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return NextResponse.json({ error: 'Tháng không hợp lệ.' }, { status: 400 });
-      const end = value === 12 ? `${String(year + 1).padStart(4, '0')}-01` : `${month.slice(0, 4)}-${String(value + 1).padStart(2, '0')}`;
-      query += ' AND e.expense_date >= ? AND e.expense_date < ?';
-      params.push(`${month}-01`, `${end}-01`);
+      const end = value === 12
+        ? `${String(year + 1).padStart(4, '0')}-01`
+        : `${month.slice(0, 4)}-${String(value + 1).padStart(2, '0')}`;
+      whereSql += ' AND e.expense_date >= ? AND e.expense_date < ?';
+      whereArgs.push(`${month}-01`, `${end}-01`);
+    } else {
+      if (from && isValidDate(from)) {
+        whereSql += ' AND e.expense_date >= ?';
+        whereArgs.push(from);
+      }
+      if (to && isValidDate(to)) {
+        whereSql += ' AND e.expense_date <= ?';
+        whereArgs.push(to);
+      }
     }
-    if (category_id) {
-      query += ` AND e.category_id = ?`;
-      params.push(category_id);
+
+    if (typeFilter && ['expense', 'income', 'transfer'].includes(typeFilter)) {
+      whereSql += ' AND e.type = ?';
+      whereArgs.push(typeFilter);
     }
+
+    if (accountIdParam && accountIdParam !== 'all') {
+      const accountIdNum = Number(accountIdParam);
+      if (Number.isInteger(accountIdNum) && accountIdNum > 0) {
+        whereSql += ' AND (e.account_id = ? OR e.to_account_id = ?)';
+        whereArgs.push(accountIdNum, accountIdNum);
+      }
+    }
+
+    if (categoryId && categoryId !== 'all') {
+      whereSql += ' AND e.category_id = ?';
+      whereArgs.push(categoryId);
+    }
+
     if (search) {
-      query += ` AND (e.description LIKE ? OR e.note LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
+      whereSql += ' AND (e.description LIKE ? OR e.note LIKE ?)';
+      whereArgs.push(`%${search}%`, `%${search}%`);
     }
 
-    query += ` ORDER BY e.expense_date DESC, e.created_at DESC`;
+    let cursorSql = '';
+    const cursorArgs: Array<string | number> = [];
+    if (cursor) {
+      const sep = cursor.lastIndexOf(':');
+      if (sep > 0) {
+        const cursorDate = cursor.slice(0, sep);
+        const cursorId = Number(cursor.slice(sep + 1));
+        if (isValidDate(cursorDate) && Number.isInteger(cursorId) && cursorId > 0) {
+          cursorSql = ' AND (e.expense_date < ? OR (e.expense_date = ? AND e.id < ?))';
+          cursorArgs.push(cursorDate, cursorDate, cursorId);
+        }
+      }
+    }
 
-    const db = await getDb();
-    const result = await db.execute({
-      sql: query,
-      args: params
-    });
-    
-    const expenses = result.rows;
-    // Calculate total income, expense, and net total
-    const totalIncome = expenses.reduce((sum, exp) => sum + (exp.type === 'income' ? Number(exp.amount || 0) : 0), 0);
-    const totalExpense = expenses.reduce((sum, exp) => sum + (exp.type === 'expense' ? Number(exp.amount || 0) : 0), 0);
+    const [summaryResult, itemsResult] = await Promise.all([
+      db.execute({
+        sql: `SELECT
+                COALESCE(SUM(CASE WHEN e.type = 'income' THEN e.amount ELSE 0 END), 0) AS total_income,
+                COALESCE(SUM(CASE WHEN e.type = 'expense' THEN e.amount ELSE 0 END), 0) AS total_expense
+              FROM expenses e
+              ${whereSql}`,
+        args: whereArgs,
+      }),
+      db.execute({
+        sql: `SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
+                     e.expense_date, e.type, e.created_at,
+                     c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
+                     a1.name AS account_name, a2.name AS to_account_name
+              FROM expenses e
+              LEFT JOIN categories c ON e.category_id = c.id
+              LEFT JOIN accounts a1 ON e.account_id = a1.id
+              LEFT JOIN accounts a2 ON e.to_account_id = a2.id
+              ${whereSql}${cursorSql}
+              ORDER BY e.expense_date DESC, e.id DESC
+              LIMIT ?`,
+        args: [...whereArgs, ...cursorArgs, limit + 1],
+      }),
+    ]);
+
+    const rows = itemsResult.rows;
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const last = items[items.length - 1];
+    const nextCursor = hasMore && last
+      ? `${String(last.expense_date)}:${Number(last.id)}`
+      : null;
+
+    const totalIncome = Number(summaryResult.rows[0]?.total_income) || 0;
+    const totalExpense = Number(summaryResult.rows[0]?.total_expense) || 0;
     const total = totalIncome - totalExpense;
 
-    return NextResponse.json({ items: expenses, total, totalIncome, totalExpense });
+    return NextResponse.json({
+      items,
+      total,
+      totalIncome,
+      totalExpense,
+      nextCursor,
+      hasMore,
+    });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch expenses' }, { status: 500 });
@@ -68,12 +146,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { amount, description, note, category_id, expense_date, date, type = 'expense', client_request_id } = await request.json();
+    const body = await request.json() as Record<string, unknown>;
+    const {
+      amount,
+      description,
+      note,
+      category_id,
+      account_id,
+      to_account_id,
+      expense_date,
+      date,
+      type = 'expense',
+      client_request_id,
+    } = body;
+
     const finalDate = expense_date || date || getVietnamToday();
     const numericAmount = Number(amount);
     const normalizedDescription = typeof description === 'string' ? description.trim() : '';
-    const normalizedCategoryId = Number(category_id);
-    const normalizedType = type === 'income' ? 'income' : 'expense';
+    const normalizedType = type === 'income' || type === 'transfer' ? type : 'expense';
+    const isTransfer = normalizedType === 'transfer';
+    const normalizedCategoryId = category_id === null || category_id === undefined || category_id === ''
+      ? null
+      : Number(category_id);
     const clientRequestId = typeof client_request_id === 'string'
       && /^[A-Za-z0-9_-]{8,120}$/.test(client_request_id)
       ? client_request_id
@@ -83,42 +177,89 @@ export async function POST(request: NextRequest) {
       !Number.isFinite(numericAmount) ||
       numericAmount <= 0 ||
       !normalizedDescription ||
-      !Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0 ||
-      !['income', 'expense'].includes(type) ||
-      !isValidDate(finalDate)
+      !['income', 'expense', 'transfer'].includes(String(type)) ||
+      !isValidDate(finalDate) ||
+      (!isTransfer && (!normalizedCategoryId || !Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0))
     ) {
       return NextResponse.json(
         { error: 'Invalid transaction data' },
         { status: 400 },
       );
     }
-    
+
     const db = await getDb();
-    const categoryResult = await db.execute({
-      sql: 'SELECT id, name FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
-      args: [normalizedCategoryId, user.id],
-    });
-    const category = categoryResult.rows[0];
-    if (!category) {
-      return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+    const { ledgerId, defaultAccountId } = await ensureUserLedgerAndAccount(db, user.id);
+
+    const resolvedAccountId = account_id ? Number(account_id) : defaultAccountId;
+    const resolvedToAccountId = isTransfer && to_account_id ? Number(to_account_id) : null;
+
+    if (!Number.isInteger(resolvedAccountId) || resolvedAccountId <= 0) {
+      return NextResponse.json({ error: 'Ví nguồn không hợp lệ.' }, { status: 400 });
     }
+    if (isTransfer) {
+      if (!resolvedToAccountId || !Number.isInteger(resolvedToAccountId) || resolvedToAccountId <= 0 || resolvedToAccountId === resolvedAccountId) {
+        return NextResponse.json({ error: 'Chọn ví đích khác ví nguồn.' }, { status: 400 });
+      }
+      const accCheck = await db.execute({
+        sql: 'SELECT id FROM accounts WHERE ledger_id = ? AND id IN (?, ?) AND archived = 0',
+        args: [ledgerId, resolvedAccountId, resolvedToAccountId],
+      });
+      if (accCheck.rows.length < 2) {
+        return NextResponse.json({ error: 'Ví nguồn hoặc ví đích không hợp lệ.' }, { status: 400 });
+      }
+    } else {
+      const accCheck = await db.execute({
+        sql: 'SELECT id FROM accounts WHERE ledger_id = ? AND id = ? AND archived = 0',
+        args: [ledgerId, resolvedAccountId],
+      });
+      if (!accCheck.rows[0]) {
+        return NextResponse.json({ error: 'Ví không hợp lệ.' }, { status: 400 });
+      }
+
+      const categoryResult = await db.execute({
+        sql: 'SELECT id, name FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
+        args: [normalizedCategoryId!, user.id],
+      });
+      if (!categoryResult.rows[0]) {
+        return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+      }
+    }
+
     const insertResult = await db.execute({
       sql: `
         INSERT INTO expenses
-          (user_id, amount, description, note, category_id, expense_date, type, client_request_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          (user_id, ledger_id, account_id, to_account_id, amount, description, note, category_id, expense_date, type, created_by_user_id, client_request_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
       `,
-      args: [user.id, numericAmount, normalizedDescription, typeof note === 'string' ? note.trim() : '', normalizedCategoryId, finalDate, normalizedType, clientRequestId]
+      args: [
+        user.id,
+        ledgerId,
+        resolvedAccountId,
+        resolvedToAccountId,
+        numericAmount,
+        normalizedDescription,
+        typeof note === 'string' ? note.trim() : '',
+        isTransfer ? null : normalizedCategoryId,
+        finalDate,
+        normalizedType,
+        user.id,
+        clientRequestId,
+      ]
     });
 
     const wasInserted = Number(insertResult.rowsAffected) > 0;
-    
+
     const newExpense = await db.execute({
       sql: `
-        SELECT e.id, e.amount, e.description, e.note, e.category_id, e.expense_date, e.type, e.created_at, c.name as category_name, c.icon as category_icon, c.color as category_color 
-        FROM expenses e 
-        LEFT JOIN categories c ON e.category_id = c.id 
+        SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
+               e.expense_date, e.type, e.created_at,
+               c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
+               a1.name AS account_name, a2.name AS to_account_name
+        FROM expenses e
+        LEFT JOIN categories c ON e.category_id = c.id
+        LEFT JOIN accounts a1 ON e.account_id = a1.id
+        LEFT JOIN accounts a2 ON e.to_account_id = a2.id
         WHERE e.user_id = ? AND ${clientRequestId ? 'e.client_request_id = ?' : 'e.id = ?'}
       `,
       args: clientRequestId
@@ -130,7 +271,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Không thể xác nhận giao dịch đã lưu.' }, { status: 500 });
     }
 
-    const budgetAlert = wasInserted && normalizedType === 'expense'
+    const budgetAlert = wasInserted && normalizedType === 'expense' && normalizedCategoryId
       ? await getBudgetAlert({
         db,
         userId: user.id,
@@ -139,7 +280,7 @@ export async function POST(request: NextRequest) {
         addedAmount: numericAmount,
       })
       : null;
-    
+
     return NextResponse.json({
       ...newExpense.rows[0],
       budgetAlert,

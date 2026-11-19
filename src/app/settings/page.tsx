@@ -49,6 +49,9 @@ import { formatCurrency, getCurrentMonth, getPercentage } from '@/lib/utils';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import Link from 'next/link';
 import { clearPwaCache } from '@/lib/pwa-cache';
+import { AccountsManager } from '@/components/AccountsManager';
+import { ProfileModulesSettings } from '@/components/ProfileModulesSettings';
+import type { EnabledModules, PersonaId } from '@/lib/modules';
 
 const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
 const AiProvidersSettings = dynamic(() => import('@/components/AiProvidersSettings').then((module) => module.AiProvidersSettings), { loading: () => <div className="h-36 animate-pulse rounded-2xl bg-slate-200/70" /> });
@@ -70,6 +73,8 @@ interface ProfileResponse {
   image: string;
   isDevelopmentUser: boolean;
   hasPassword?: boolean;
+  primaryPersona?: PersonaId;
+  modules?: EnabledModules;
 }
 
 interface SpendingSummary {
@@ -338,8 +343,8 @@ export default function SettingsPage() {
       <div className="md:grid md:grid-cols-[minmax(0,1fr)] xl:grid-cols-[190px_minmax(0,1fr)] xl:gap-7">
         <nav aria-label="Mục cài đặt" className="sticky top-6 hidden h-fit rounded-2xl border border-slate-200 bg-white p-2 xl:block">
           {[
-            ['#ho-so', 'Hồ sơ'], ['#ai-ca-nhan', 'AI cá nhân'],
-            ['#nhac-nho', 'Nhắc nhở'], ['#danh-muc', 'Danh mục'], ['#du-lieu', 'Dữ liệu'],
+            ['#ho-so', 'Hồ sơ'], ['#nhu-cau', 'Nhu cầu & Tính năng'], ['#vi-tien', 'Ví tiền'],
+            ['#ai-ca-nhan', 'AI cá nhân'], ['#nhac-nho', 'Nhắc nhở'], ['#danh-muc', 'Danh mục'], ['#du-lieu', 'Dữ liệu'],
           ].map(([href, label]) => <a key={href} href={href} className="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{label}</a>)}
         </nav>
         <div className="min-w-0 space-y-6">
@@ -443,6 +448,17 @@ export default function SettingsPage() {
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-[15px] font-semibold text-slate-800">Cơ cấu chi tiêu</h2><p className="mt-0.5 text-xs text-slate-400">Danh mục theo tỷ trọng trong kỳ đã chọn</p></div><div className="divide-y divide-slate-100">{spendingSummary.by_category.map((item) => <ProfileCategoryRow key={item.category_name} item={item} total={spendingSummary.total} />)}</div></section>
         </> : <p className="rounded-2xl border border-slate-200 bg-white py-10 text-center text-sm text-slate-400">Chưa có khoản chi trong tháng này.</p>}
       </section>
+
+      {profile?.primaryPersona && profile?.modules ? (
+        <ProfileModulesSettings
+          key={`${dataRevision}-${profile.primaryPersona}`}
+          initialPersona={profile.primaryPersona}
+          initialModules={profile.modules}
+          onModulesUpdated={(nextModules) => setProfile((current) => current ? { ...current, modules: nextModules } : current)}
+        />
+      ) : null}
+
+      <AccountsManager key={`accounts-${dataRevision}`} />
 
       <div id="ai-ca-nhan" className="scroll-mt-6"><AiProvidersSettings key={dataRevision} /></div>
 

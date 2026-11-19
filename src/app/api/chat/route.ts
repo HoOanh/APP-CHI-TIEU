@@ -8,6 +8,7 @@ import {
 import { UNCLASSIFIED_EXPENSE } from '@/lib/schema';
 import { getBudgetAlert } from '@/lib/budget-alert';
 import { findChatTransactions, saveChatTransactions } from '@/lib/expense-chat';
+import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 import {
   analyzeTransactions,
   correctPendingTransactions,
@@ -232,7 +233,11 @@ export async function POST(request: NextRequest) {
 
       if (!requestId) return NextResponse.json({ transactions, correction: isCorrection });
 
-      const saved = await saveChatTransactions(db, user.id, requestId, transactions);
+      const { ledgerId, defaultAccountId } = await ensureUserLedgerAndAccount(db, user.id);
+      const saved = await saveChatTransactions(db, user.id, requestId, transactions, {
+        ledgerId,
+        accountId: defaultAccountId,
+      });
       const expenseGroups = new Map<string, { categoryId: string; expenseDate: string; addedAmount: number }>();
       if (saved.inserted) {
         for (const transaction of transactions) {

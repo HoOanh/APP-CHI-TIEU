@@ -5,16 +5,19 @@ import useSWR from 'swr';
 import { QuickEntryAccess } from '@/components/QuickEntryAccess';
 import {
   AlertTriangle,
+  ArrowRightLeft,
   ChevronRight,
   ReceiptText,
   Settings,
   Siren,
+  Wallet,
   WalletCards,
 } from 'lucide-react';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { WeeklyInsightCard, type Insight } from '@/components/WeeklyInsightCard';
+import type { EnabledModules } from '@/lib/modules';
 import {
   cn,
   formatCurrency,
@@ -29,9 +32,19 @@ interface Transaction {
   amount: number;
   description: string;
   date: string;
-  type: 'income' | 'expense';
-  category_name: string;
-  category_color: string;
+  type: 'income' | 'expense' | 'transfer';
+  category_name: string | null;
+  category_color: string | null;
+  account_name?: string | null;
+  to_account_name?: string | null;
+}
+
+interface DashboardAccount {
+  id: number;
+  name: string;
+  type: string;
+  balance: number;
+  is_default: boolean;
 }
 
 interface Budget {
@@ -58,6 +71,8 @@ interface Dashboard {
 
 interface DashboardResponse {
   summary: Dashboard;
+  accounts?: DashboardAccount[];
+  modules?: EnabledModules;
   recent: Transaction[];
   attentionBudgets: Budget[];
   categorySpending: CategorySpending[];
@@ -84,6 +99,8 @@ export default function DashboardPage() {
     revalidateOnFocus: true,
   });
   const summary = data?.summary ?? null;
+  const accounts = data?.accounts ?? [];
+  const showAccountsStrip = Boolean(data?.modules?.multi_account || accounts.length > 1);
   const recent = data?.recent ?? null;
   const attentionBudgets = data?.attentionBudgets ?? null;
   const categorySpending = data?.categorySpending ?? null;
@@ -126,7 +143,9 @@ export default function DashboardPage() {
               {summary ? (
                 <p className="mt-2 truncate text-[clamp(1.9rem,9vw,3.2rem)] font-semibold leading-none tracking-[-0.055em] tabular-nums">{formatCurrency(summary.walletBalance)}</p>
               ) : <Skeleton className="mt-3 h-9 w-48 bg-white/20" />}
-              <p className="mt-2 text-xs text-white/70">Tổng số dư ví từ tất cả giao dịch</p>
+              <p className="mt-2 text-xs text-white/70">
+                {showAccountsStrip ? `Tổng hợp từ ${accounts.length} ví đang hoạt động` : 'Tổng số dư ví từ tất cả giao dịch'}
+              </p>
             </div>
             <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/20">
               <WalletCards className="size-5" />
@@ -138,6 +157,34 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+
+      {showAccountsStrip ? (
+        <section className="mt-4">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <p className="text-xs font-semibold text-slate-600">Các ví của bạn</p>
+            <Link href="/settings#vi-tien" className="text-xs font-medium text-[#00a970] hover:underline">
+              Quản lý ví →
+            </Link>
+          </div>
+          <div className="no-scrollbar flex gap-2.5 overflow-x-auto pb-1">
+            {accounts.map((acc) => (
+              <Link
+                key={acc.id}
+                href={`/expenses?account_id=${acc.id}`}
+                className="flex min-w-[155px] shrink-0 items-center gap-2.5 rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 transition hover:border-emerald-300"
+              >
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-[#00a970]">
+                  <Wallet className="size-4" />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-medium text-slate-600">{acc.name}</p>
+                  <p className="truncate text-sm font-semibold tabular-nums text-slate-800">{formatCurrency(acc.balance)}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="my-4 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-slate-500">
         <span className="flex shrink-0 items-center gap-1.5"><ReceiptText className="size-4 text-[#00a970]" /> {summary ? `${summary.transactionCount} giao dịch tháng này` : 'Đang tải giao dịch…'}</span>
@@ -188,18 +235,31 @@ export default function DashboardPage() {
             <div className="space-y-4 p-4">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-12 w-full" />)}</div>
           ) : recent.length ? (
             <div className="divide-y divide-slate-100">
-              {recent.map((transaction) => (
-                <div key={transaction.id} className="flex min-w-0 items-center gap-3 px-3.5 py-3.5 sm:px-4">
-                  <CategoryIcon name={transaction.category_name} color={transaction.category_color} className="size-9 rounded-xl" iconClassName="size-4" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-800">{transaction.description || transaction.category_name}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-slate-400">{transaction.category_name} · {formatShortDate(transaction.date)}</p>
+              {recent.map((transaction) => {
+                const isTransfer = transaction.type === 'transfer';
+                return (
+                  <div key={transaction.id} className="flex min-w-0 items-center gap-3 px-3.5 py-3.5 sm:px-4">
+                    {isTransfer ? (
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600">
+                        <ArrowRightLeft className="size-4" />
+                      </span>
+                    ) : (
+                      <CategoryIcon name={transaction.category_name || 'Khác'} color={transaction.category_color || '#64748b'} className="size-9 rounded-xl" iconClassName="size-4" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-800">{transaction.description || transaction.category_name}</p>
+                      <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                        {isTransfer
+                          ? `${transaction.account_name || 'Ví nguồn'} → ${transaction.to_account_name || 'Ví đích'}`
+                          : transaction.category_name} · {formatShortDate(transaction.date)}
+                      </p>
+                    </div>
+                    <p className={cn('max-w-[36%] shrink-0 truncate text-right text-[13px] font-semibold tabular-nums', isTransfer ? 'text-sky-700' : transaction.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>
+                      {isTransfer ? '' : transaction.type === 'income' ? '+' : '−'}{formatCurrency(transaction.amount)}
+                    </p>
                   </div>
-                  <p className={cn('max-w-[36%] shrink-0 truncate text-right text-[13px] font-semibold tabular-nums', transaction.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>
-                    {transaction.type === 'income' ? '+' : '−'}{formatCurrency(transaction.amount)}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : <p className="px-4 py-8 text-center text-sm text-slate-400">Chưa có giao dịch nào.</p>}
         </div>

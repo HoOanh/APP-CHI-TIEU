@@ -23,12 +23,15 @@ import { useToast } from '@/hooks/useToast';
 import { syncOfflineTransactions } from '@/lib/offline-queue';
 import { cn } from '@/lib/utils';
 import { LinkPending } from '@/components/LinkPending';
+import type { EnabledModules } from '@/lib/modules';
 
 interface AppShellUser {
   name: string;
   email: string;
   image: string;
   isDevelopmentUser: boolean;
+  onboardedAt?: string | null;
+  modules?: EnabledModules;
 }
 
 interface AppShellProps {
@@ -60,7 +63,14 @@ export function AppShell({ children, user }: AppShellProps) {
   const router = useRouter();
   const { showToast } = useToast();
   const isPublicRoute = pathname.startsWith('/login') || pathname.startsWith('/reset-password');
+  const isOnboardingRoute = pathname.startsWith('/onboarding');
   const isChatRoute = pathname === '/chat' || pathname === '/debt-chat';
+
+  useEffect(() => {
+    if (user && !user.isDevelopmentUser && !user.onboardedAt && !isPublicRoute && !isOnboardingRoute) {
+      router.replace('/onboarding');
+    }
+  }, [isOnboardingRoute, isPublicRoute, router, user]);
 
   useEffect(() => {
     if (!user || isPublicRoute) return;
@@ -102,7 +112,7 @@ export function AppShell({ children, user }: AppShellProps) {
     return () => window.removeEventListener('keydown', openQuickCapture);
   }, [isChatRoute, isPublicRoute, router]);
 
-  if (isPublicRoute) {
+  if (isPublicRoute || isOnboardingRoute) {
     return <main className="min-h-dvh">{children}</main>;
   }
 

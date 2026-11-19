@@ -65,11 +65,11 @@ interface SavedTransaction {
   id: string | number;
   amount: number;
   description: string;
-  category_name: string;
-  category_id: number | string;
+  category_name: string | null;
+  category_id: number | string | null;
   note: string | null;
   expense_date: string;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'transfer';
 }
 
 interface ChatResponse {

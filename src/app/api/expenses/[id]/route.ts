@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
+import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 interface RouteContext { params: Promise<{ id: string }> }
 
@@ -18,49 +19,103 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       description?: unknown;
       note?: unknown;
       category_id?: unknown;
+      account_id?: unknown;
+      to_account_id?: unknown;
       expense_date?: unknown;
       type?: unknown;
     };
     const amount = Number(payload.amount);
     const description = typeof payload.description === 'string' ? payload.description.trim() : '';
-    const categoryId = Number(payload.category_id);
+    const type = payload.type === 'income' || payload.type === 'transfer' ? payload.type : 'expense';
+    const isTransfer = type === 'transfer';
+    const categoryId = payload.category_id === null || payload.category_id === undefined || payload.category_id === ''
+      ? null
+      : Number(payload.category_id);
     const expenseDate = payload.expense_date;
-    const type = payload.type === 'income' ? 'income' : 'expense';
-    if (!Number.isFinite(amount) || amount <= 0 || !description || description.length > 160 || !Number.isInteger(categoryId) || categoryId <= 0 || !isValidDate(expenseDate) || (payload.type !== 'income' && payload.type !== 'expense')) {
+
+    if (
+      !Number.isFinite(amount)
+      || amount <= 0
+      || !description
+      || description.length > 160
+      || !isValidDate(expenseDate)
+      || !['income', 'expense', 'transfer'].includes(String(payload.type))
+      || (!isTransfer && (!categoryId || !Number.isInteger(categoryId) || categoryId <= 0))
+    ) {
       return NextResponse.json({ error: 'Thông tin giao dịch chưa hợp lệ.' }, { status: 400 });
     }
-    
+
     const db = await getDb();
-    const [category, existingResult] = await Promise.all([
-      db.execute({
-        sql: 'SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
-        args: [categoryId, user.id],
-      }),
-      db.execute({
-        sql: 'SELECT amount, category_id, expense_date, type FROM expenses WHERE id = ? AND user_id = ?',
-        args: [id, user.id],
-      }),
-    ]);
-    if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+    const { ledgerId, defaultAccountId } = await ensureUserLedgerAndAccount(db, user.id);
+
+    const existingResult = await db.execute({
+      sql: 'SELECT amount, category_id, account_id, to_account_id, expense_date, type FROM expenses WHERE id = ? AND user_id = ?',
+      args: [id, user.id],
+    });
     const previous = existingResult.rows[0];
     if (!previous) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
+    const resolvedAccountId = payload.account_id
+      ? Number(payload.account_id)
+      : Number(previous.account_id || defaultAccountId);
+    const resolvedToAccountId = isTransfer
+      ? Number(payload.to_account_id || previous.to_account_id || 0)
+      : null;
+
+    if (!Number.isInteger(resolvedAccountId) || resolvedAccountId <= 0) {
+      return NextResponse.json({ error: 'Ví nguồn không hợp lệ.' }, { status: 400 });
+    }
+    if (isTransfer) {
+      if (!resolvedToAccountId || resolvedToAccountId === resolvedAccountId) {
+        return NextResponse.json({ error: 'Chọn ví đích khác ví nguồn.' }, { status: 400 });
+      }
+      const accCheck = await db.execute({
+        sql: 'SELECT id FROM accounts WHERE ledger_id = ? AND id IN (?, ?)',
+        args: [ledgerId, resolvedAccountId, resolvedToAccountId],
+      });
+      if (accCheck.rows.length < 2) {
+        return NextResponse.json({ error: 'Ví nguồn hoặc ví đích không hợp lệ.' }, { status: 400 });
+      }
+    } else {
+      const category = await db.execute({
+        sql: 'SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
+        args: [categoryId!, user.id],
+      });
+      if (!category.rows[0]) {
+        return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+      }
+    }
+
     await db.execute({
       sql: `
-        UPDATE expenses 
-        SET amount = ?, description = ?, note = ?, category_id = ?, expense_date = ?, type = ?
+        UPDATE expenses
+        SET amount = ?, description = ?, note = ?, category_id = ?, account_id = ?, to_account_id = ?, expense_date = ?, type = ?
         WHERE id = ? AND user_id = ?
       `,
-      args: [amount, description, typeof payload.note === 'string' ? payload.note.trim() : '', categoryId, expenseDate, type, id, user.id]
+      args: [
+        amount,
+        description,
+        typeof payload.note === 'string' ? payload.note.trim() : '',
+        isTransfer ? null : categoryId,
+        resolvedAccountId,
+        resolvedToAccountId,
+        expenseDate,
+        type,
+        id,
+        user.id,
+      ]
     });
-    
+
     const updated = await db.execute({
       sql: `
-        SELECT e.*, c.name as category_name, c.icon as category_icon, c.color as category_color 
-        FROM expenses e 
-        LEFT JOIN categories c ON e.category_id = c.id 
+        SELECT e.*, c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
+               a1.name AS account_name, a2.name AS to_account_name
+        FROM expenses e
+        LEFT JOIN categories c ON e.category_id = c.id
+        LEFT JOIN accounts a1 ON e.account_id = a1.id
+        LEFT JOIN accounts a2 ON e.to_account_id = a2.id
         WHERE e.id = ? AND e.user_id = ?
       `,
       args: [id, user.id]
@@ -72,13 +127,14 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     const sameBucketMonth =
       previous.type === 'expense'
+      && categoryId !== null
       && Number(previous.category_id) === categoryId
       && String(previous.expense_date).slice(0, 7) === expenseDate.slice(0, 7);
     const addedDelta = sameBucketMonth
       ? Math.max(0, amount - (Number(previous.amount) || 0))
       : amount;
 
-    const budgetAlert = type === 'expense' && addedDelta > 0
+    const budgetAlert = type === 'expense' && categoryId !== null && addedDelta > 0
       ? await getBudgetAlert({
           db,
           userId: user.id,
@@ -112,7 +168,6 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
-    
     const db = await getDb();
     const deleted = await db.execute({
       sql: 'DELETE FROM expenses WHERE id = ? AND user_id = ?',
@@ -122,7 +177,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     if (Number(deleted.rowsAffected) === 0) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error(error);
