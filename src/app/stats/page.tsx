@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { onTransactionsChanged } from '@/lib/transaction-events';
 import dynamic from 'next/dynamic';
-import { ChevronLeft, ChevronRight, ReceiptText, TrendingDown, TrendingUp, WalletCards } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Hash, ReceiptText, TrendingDown, TrendingUp, WalletCards } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { MonthPicker } from '@/components/MonthPicker';
 import { Progress } from '@/components/ui/progress';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn, formatCurrency, formatShortDate, getCurrentMonth, getPercentage } from '@/lib/utils';
@@ -17,6 +18,15 @@ const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((modul
 
 interface CategoryPoint { category_name: string; category_color: string; total: number; count: number; }
 interface DatePoint { date: string; total: number; }
+interface TagPnlPoint {
+  tag_id: number;
+  tag_name: string;
+  tag_color: string;
+  income: number;
+  expense: number;
+  net: number;
+  count: number;
+}
 interface StatsResponse {
   total: number;
   income_total?: number;
@@ -24,6 +34,19 @@ interface StatsResponse {
   saving_rate_percent?: number;
   liquid_balance?: number;
   runway_months?: number | null;
+  ledgerKind?: 'personal' | 'family' | 'business';
+  ledgerName?: string;
+  tagsEnabled?: boolean;
+  pnl?: {
+    revenue: number;
+    operating_expense: number;
+    gross_profit: number;
+    margin_percent: number | null;
+    pending_reimburse_total: number;
+    pending_reimburse_count: number;
+    settled_reimburse_total: number;
+    by_tag: TagPnlPoint[];
+  };
   count: number;
   daily_average: number;
   by_category: CategoryPoint[];
@@ -31,14 +54,24 @@ interface StatsResponse {
   previous_total: number;
   comparison_label: string;
 }
+interface TagOption { id: number; name: string; color: string; usage_count: number; }
 type Period = 'daily' | 'monthly' | 'quarterly' | 'yearly';
 
 export default function StatsPage() {
   const [period, setPeriod] = useState<Period>('daily');
   const [month, setMonth] = useState(getCurrentMonth());
   const [year, setYear] = useState(new Date().getFullYear().toString());
+  const [activeTag, setActiveTag] = useState('all');
+
+  const { data: tagsData } = useSWR<{ tags: TagOption[] }>('/api/tags', async (url: string) => {
+    const res = await fetch(url);
+    if (!res.ok) return { tags: [] };
+    return res.json() as Promise<{ tags: TagOption[] }>;
+  });
+
+  const tagParam = activeTag !== 'all' ? `&tag=${encodeURIComponent(activeTag)}` : '';
   const { data, error, isLoading, mutate } = useSWR<StatsResponse>(
-    `/api/expenses/stats?period=${period}&month=${month}&year=${year}`,
+    `/api/expenses/stats?period=${period}&month=${month}&year=${year}${tagParam}`,
     async (url: string) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error('Không tải được thống kê');
@@ -52,11 +85,35 @@ export default function StatsPage() {
   const peak = useMemo(() => data?.by_date.reduce<DatePoint | null>((current, point) => !current || point.total > current.total ? point : current, null) ?? null, [data?.by_date]);
   const change = data?.previous_total ? ((data.total - data.previous_total) / data.previous_total) * 100 : null;
 
+  const availableTags = tagsData?.tags ?? [];
+  const showBusinessPnl = Boolean(
+    data?.tagsEnabled
+    || data?.ledgerKind === 'business'
+    || (data?.pnl?.by_tag.length ?? 0) > 0
+    || (data?.pnl?.pending_reimburse_count ?? 0) > 0,
+  );
+
   return (
     <div className="mx-auto min-h-screen w-full max-w-7xl bg-[#f7f9fb] pb-nav">
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
-        <div className="flex items-center justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h1></div><PeriodPicker period={period} month={month} year={year} onMonth={setMonth} onYear={setYear} /></div>
-        <Tabs value={period} onValueChange={(value) => setPeriod(value as Period)} className="mt-4"><TabsList className="grid w-full grid-cols-4 md:max-w-sm rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
+        <div className="flex items-center justify-between gap-2"><div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h1></div><PeriodPicker period={period} month={month} year={year} onMonth={setMonth} onYear={setYear} /></div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <Tabs value={period} onValueChange={(value) => setPeriod(value as Period)}><TabsList className="grid w-full grid-cols-4 md:max-w-sm rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
+          {availableTags.length > 0 || activeTag !== 'all' ? (
+            <Select value={activeTag} onValueChange={setActiveTag}>
+              <SelectTrigger aria-label="Lọc thống kê theo tag" className="h-9 w-44 rounded-xl bg-white text-xs">
+                <Hash className="mr-1.5 size-3.5 text-slate-500" />
+                <SelectValue placeholder="Tất cả #tag" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tất cả #tag</SelectItem>
+                {availableTags.map((t) => (
+                  <SelectItem key={t.id} value={t.name}>#{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+        </div>
       </header>
 
       <main className="space-y-5 px-4 py-5 md:px-8 md:py-7 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0">
@@ -89,6 +146,81 @@ export default function StatsPage() {
               tone="mint"
             />
           </section>
+
+          {showBusinessPnl && data.pnl ? (
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white lg:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+                <div>
+                  <h2 className="text-[15px] font-semibold text-slate-800">
+                    Báo cáo Lãi / Lỗ (P&L) &amp; Hoàn ứng
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {data.ledgerName || 'Sổ tài chính'} · Tổng hợp doanh thu, chi phí vận hành và theo dõi `#tag`
+                  </p>
+                </div>
+                {data.pnl.pending_reimburse_count > 0 ? (
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                    {data.pnl.pending_reimburse_count} khoản chờ hoàn ứng ({formatCurrency(data.pnl.pending_reimburse_total)})
+                  </span>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+                <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                  <p className="text-[11px] text-slate-500">Doanh thu</p>
+                  <p className="mt-1 text-base font-bold tabular-nums text-[#00a970]">
+                    +{formatCurrency(data.pnl.revenue)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                  <p className="text-[11px] text-slate-500">Chi phí vận hành</p>
+                  <p className="mt-1 text-base font-bold tabular-nums text-[#f15b64]">
+                    −{formatCurrency(data.pnl.operating_expense)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                  <p className="text-[11px] text-slate-500">Lợi nhuận ròng (P&amp;L)</p>
+                  <p className={cn('mt-1 text-base font-bold tabular-nums', data.pnl.gross_profit >= 0 ? 'text-[#00a970]' : 'text-[#f15b64]')}>
+                    {data.pnl.gross_profit >= 0 ? '+' : '−'}{formatCurrency(Math.abs(data.pnl.gross_profit))}
+                  </p>
+                  {data.pnl.margin_percent !== null ? (
+                    <p className="mt-0.5 text-[10px] text-slate-500">Biên LN: {data.pnl.margin_percent}%</p>
+                  ) : null}
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                  <p className="text-[11px] text-slate-500">Hoàn ứng trong kỳ</p>
+                  <p className="mt-1 text-sm font-semibold tabular-nums text-amber-700">
+                    Chờ: {formatCurrency(data.pnl.pending_reimburse_total)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] tabular-nums text-emerald-700">
+                    Đã hoàn: {formatCurrency(data.pnl.settled_reimburse_total)}
+                  </p>
+                </div>
+              </div>
+              {data.pnl.by_tag.length > 0 ? (
+                <div className="border-t border-slate-100 px-4 py-3">
+                  <p className="mb-2 text-xs font-semibold text-slate-600">Hiệu quả theo `#tag`</p>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {data.pnl.by_tag.map((tag) => (
+                      <div key={tag.tag_id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs">
+                        <div className="min-w-0">
+                          <span className="inline-flex items-center gap-1 font-semibold text-slate-800">
+                            <span className="size-2 rounded-full" style={{ backgroundColor: tag.tag_color }} />
+                            #{tag.tag_name}
+                          </span>
+                          <p className="mt-0.5 text-[10px] text-slate-400">
+                            {tag.count} giao dịch · Thu {formatCurrency(tag.income)} · Chi {formatCurrency(tag.expense)}
+                          </p>
+                        </div>
+                        <span className={cn('shrink-0 font-bold tabular-nums', tag.net >= 0 ? 'text-[#00a970]' : 'text-[#f15b64]')}>
+                          {tag.net >= 0 ? '+' : '−'}{formatCurrency(Math.abs(tag.net))}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           {data.total > 0 ? <>
             <div className="lg:col-span-2"><StatsCharts byDate={data.by_date} period={period} total={data.total} /></div>

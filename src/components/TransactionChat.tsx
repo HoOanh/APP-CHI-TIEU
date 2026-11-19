@@ -55,6 +55,16 @@ interface DebtReceiptData {
   account_name: string | null;
 }
 
+interface SplitReceiptData {
+  totalAmount: number;
+  peopleCount: number;
+  myShare: number;
+  receivableAmount: number;
+  debtId: number;
+  debtName: string;
+  creditor: string;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -65,6 +75,7 @@ interface Message {
   budgetAlerts?: { title: string; message: string; severity: 'warning' | 'danger' }[];
   qaMetrics?: QaMetric[];
   receiptData?: DebtReceiptData;
+  splitReceipt?: SplitReceiptData;
   failedSubmission?: ChatSubmission;
   canEditSubmission?: boolean;
 }
@@ -108,12 +119,13 @@ interface SavedTransaction {
 
 interface ChatResponse {
   saved?: boolean;
-  intent?: 'expense' | 'income' | 'transfer' | 'debt' | 'question';
+  intent?: 'expense' | 'income' | 'transfer' | 'debt' | 'question' | 'split';
   fast_path?: boolean;
   message?: string;
   answer?: string;
   qaMetrics?: QaMetric[];
   receiptData?: DebtReceiptData;
+  splitReceipt?: SplitReceiptData;
   transactions?: SavedTransaction[];
   budgetAlerts?: { title: string; message: string; severity: 'warning' | 'danger' }[];
   error?: string;
@@ -271,6 +283,20 @@ export function TransactionChat({
           role: 'assistant',
           content: data.message || 'Đã ghi nhận thanh toán công nợ.',
           receiptData: data.receiptData,
+        }]);
+        refreshData();
+        return;
+      }
+
+      if (data.intent === 'split' && data.splitReceipt) {
+        setMessages((current) => [...current, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          fastPath: Boolean(data.fast_path),
+          content: data.message || 'Đã chia tiền nhóm.',
+          splitReceipt: data.splitReceipt,
+          transactions: data.transactions ?? [],
+          budgetAlerts: data.budgetAlerts,
         }]);
         refreshData();
         return;
@@ -729,6 +755,40 @@ function MessageBubble({ message, onRetry, onEditSubmission, onSaved }: {
               Còn lại: <strong>{formatCurrency(message.receiptData.remaining)}</strong>
               {message.receiptData.account_name ? ` · Ví: ${message.receiptData.account_name}` : ''}
             </p>
+          </div>
+        ) : null}
+        {message.splitReceipt ? (
+          <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/60 p-3 text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-sky-900">
+                Chia tiền nhóm ({message.splitReceipt.peopleCount} người)
+              </span>
+              <span className="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[11px] font-medium text-sky-800">
+                Tổng {formatCurrency(message.splitReceipt.totalAmount)}
+              </span>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg bg-white px-2.5 py-2">
+                <p className="text-[10px] text-slate-500">Chi tiêu của bạn</p>
+                <p className="mt-0.5 font-bold tabular-nums text-[#f15b64]">
+                  −{formatCurrency(message.splitReceipt.myShare)}
+                </p>
+              </div>
+              <div className="rounded-lg bg-white px-2.5 py-2">
+                <p className="text-[10px] text-slate-500">Phải thu ({message.splitReceipt.creditor})</p>
+                <p className="mt-0.5 font-bold tabular-nums text-[#00a970]">
+                  +{formatCurrency(message.splitReceipt.receivableAmount)}
+                </p>
+              </div>
+            </div>
+            {message.splitReceipt.debtId > 0 ? (
+              <Link
+                href={`/debts/${message.splitReceipt.debtId}`}
+                className="mt-2 inline-block text-xs font-semibold text-sky-700 hover:underline"
+              >
+                Theo dõi khoản phải thu “{message.splitReceipt.debtName}” →
+              </Link>
+            ) : null}
           </div>
         ) : null}
         {message.transactions?.map((transaction) => <TransactionCard key={transaction.id} transaction={transaction} onSaved={onSaved} />)}

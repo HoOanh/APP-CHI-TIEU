@@ -4,6 +4,7 @@ import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
 import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
+import { getTagsForExpenses, syncExpenseTags } from '@/lib/tags';
 
 interface RouteContext { params: Promise<{ id: string }> }
 
@@ -24,7 +25,15 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       to_account_id?: unknown;
       expense_date?: unknown;
       type?: unknown;
+      reimburse_status?: unknown;
+      tags?: unknown;
     };
+    const reimburseStatus = payload.reimburse_status === 'pending' || payload.reimburse_status === 'settled' || payload.reimburse_status === 'none'
+      ? payload.reimburse_status
+      : undefined;
+    const tagList = Array.isArray(payload.tags)
+      ? payload.tags.filter((item): item is string => typeof item === 'string')
+      : undefined;
     const amount = Number(payload.amount);
     const description = typeof payload.description === 'string' ? payload.description.trim() : '';
     const type = payload.type === 'income' || payload.type === 'transfer' ? payload.type : 'expense';
@@ -97,7 +106,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     await db.execute({
       sql: `
         UPDATE expenses
-        SET amount = ?, description = ?, note = ?, category_id = ?, account_id = ?, to_account_id = ?, expense_date = ?, type = ?
+        SET amount = ?, description = ?, note = ?, category_id = ?, account_id = ?, to_account_id = ?, expense_date = ?, type = ?,
+            reimburse_status = COALESCE(?, reimburse_status)
         WHERE id = ?
       `,
       args: [
@@ -109,9 +119,14 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         resolvedToAccountId,
         expenseDate,
         type,
+        isTransfer ? 'none' : (reimburseStatus ?? null),
         id,
       ]
     });
+
+    const syncedTags = tagList !== undefined
+      ? await syncExpenseTags(db, targetLedgerId, Number(id), tagList)
+      : (await getTagsForExpenses(db, [Number(id)])).get(Number(id)) ?? [];
 
     const updated = await db.execute({
       sql: `
@@ -153,6 +168,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({
       ...updated.rows[0],
+      tags: syncedTags,
       budgetAlert,
     });
   } catch (error) {
@@ -168,6 +184,75 @@ function isValidDate(value: unknown): value is string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+export async function PATCH(request: NextRequest, context: RouteContext) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { id } = await context.params;
+    const rawBody: unknown = await request.json().catch(() => null);
+    if (!rawBody || typeof rawBody !== 'object') {
+      return NextResponse.json({ error: 'Dữ liệu không hợp lệ.' }, { status: 400 });
+    }
+    const body = rawBody as { reimburse_status?: unknown; tags?: unknown };
+    const nextStatus = body.reimburse_status === 'none' || body.reimburse_status === 'pending' || body.reimburse_status === 'settled'
+      ? body.reimburse_status
+      : undefined;
+    const nextTags = Array.isArray(body.tags)
+      ? body.tags.filter((item): item is string => typeof item === 'string')
+      : undefined;
+
+    if (nextStatus === undefined && nextTags === undefined) {
+      return NextResponse.json({ error: 'Không có trường hợp lệ để cập nhật.' }, { status: 400 });
+    }
+
+    const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    const existing = await db.execute({
+      sql: 'SELECT id, ledger_id, user_id, type FROM expenses WHERE id = ? LIMIT 1',
+      args: [id],
+    });
+    const row = existing.rows[0];
+    if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+    const targetLedgerId = row.ledger_id ? Number(row.ledger_id) : ledgerId;
+    if (!row.ledger_id && Number(row.user_id) !== user.id) {
+      return NextResponse.json({ error: 'Bạn không có quyền sửa giao dịch này.' }, { status: 403 });
+    }
+    await assertLedgerAccess(db, user.id, targetLedgerId, 'editor');
+
+    if (nextStatus !== undefined && row.type !== 'transfer') {
+      await db.execute({
+        sql: 'UPDATE expenses SET reimburse_status = ? WHERE id = ?',
+        args: [nextStatus, id],
+      });
+    }
+
+    const syncedTags = nextTags !== undefined
+      ? await syncExpenseTags(db, targetLedgerId, Number(id), nextTags)
+      : (await getTagsForExpenses(db, [Number(id)])).get(Number(id)) ?? [];
+
+    const refreshed = await db.execute({
+      sql: 'SELECT id, reimburse_status FROM expenses WHERE id = ? LIMIT 1',
+      args: [id],
+    });
+
+    return NextResponse.json({
+      id: Number(refreshed.rows[0]?.id || id),
+      reimburse_status: String(refreshed.rows[0]?.reimburse_status || 'none'),
+      tags: syncedTags,
+    });
+  } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    console.error(error);
+    return NextResponse.json({ error: 'Failed to patch expense' }, { status: 500 });
+  }
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {

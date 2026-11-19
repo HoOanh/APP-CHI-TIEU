@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client';
 
 export const UNCLASSIFIED_EXPENSE = 'Chưa phân loại';
-const SCHEMA_VERSION = '2026-11-v2.0-s4';
+const SCHEMA_VERSION = '2026-11-v2.1-s6';
 
 export async function initializeDatabase(db: Client) {
   await db.execute('PRAGMA foreign_keys = ON').catch(() => {});
@@ -362,6 +362,24 @@ export async function initializeDatabase(db: Client) {
       FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE SET NULL,
       UNIQUE(rule_id, due_date)
     );
+
+    CREATE TABLE IF NOT EXISTS tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#64748b',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+      UNIQUE(ledger_id, name)
+    );
+
+    CREATE TABLE IF NOT EXISTS expense_tags (
+      expense_id INTEGER NOT NULL,
+      tag_id INTEGER NOT NULL,
+      PRIMARY KEY (expense_id, tag_id),
+      FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE,
+      FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    );
   `);
 
   await migrateLegacyTables(db);
@@ -423,6 +441,10 @@ export async function initializeDatabase(db: Client) {
       ON recurring_rules(enabled, next_due_date);
     CREATE INDEX IF NOT EXISTS idx_recurring_occ_user
       ON recurring_occurrences(user_id, status, due_date);
+    CREATE INDEX IF NOT EXISTS idx_tags_ledger
+      ON tags(ledger_id, name);
+    CREATE INDEX IF NOT EXISTS idx_expense_tags_tag
+      ON expense_tags(tag_id, expense_id);
   `);
 
   // Insert default categories: [name, icon, color, kind, budget_group]

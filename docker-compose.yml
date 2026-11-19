@@ -1,0 +1,57 @@
+services:
+  sqld:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    container_name: chi-tieu-sqld
+    restart: unless-stopped
+    environment:
+      SQLD_NODE: primary
+    volumes:
+      - sqld_data:/var/lib/sqld
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chi-tieu-app
+    restart: unless-stopped
+    depends_on:
+      sqld:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    env_file:
+      - path: .env.production
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      TURSO_DATABASE_URL: http://sqld:8080
+      TURSO_AUTH_TOKEN: ""
+      ALLOW_LOCAL_DEV_BYPASS: "false"
+
+  cron:
+    image: alpine:3.20
+    container_name: chi-tieu-cron
+    restart: unless-stopped
+    depends_on:
+      - app
+    env_file:
+      - path: .env.production
+        required: false
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache curl >/dev/null && \
+        echo "*/15 * * * * curl -fsS -X POST http://app:3000/api/cron/pwa-reminders -H \"Authorization: Bearer \$${CRON_SECRET}\" >/dev/null || true" > /etc/crontabs/root && \
+        crond -f -l 6
+
+volumes:
+  sqld_data:
