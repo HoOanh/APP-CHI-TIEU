@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { computeSafeToSpend, evaluateBudgetJar } from '@/lib/budget-evaluator';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { getUserLedgerContext } from '@/lib/ledger-context';
 import { getCurrentMonth, getVietnamToday } from '@/lib/utils';
 
@@ -26,6 +27,7 @@ export async function GET(request: NextRequest) {
   try {
     const db = await getDb();
     const ctx = await getUserLedgerContext(db, user.id);
+    await assertLedgerAccess(db, user.id, ctx.ledgerId, 'viewer');
     const databaseReadyAt = performance.now();
     const today = getVietnamToday();
     const [summaryResult, accountsResult, recentResult, alertsResult, categoryResult, insightResult] = await db.batch([
@@ -54,13 +56,15 @@ export async function GET(request: NextRequest) {
         args: [ctx.ledgerId],
       },
       {
-        sql: `SELECT e.id, e.amount, e.description, e.expense_date AS date, e.type,
+        sql: `SELECT e.id, e.amount, e.description, e.expense_date AS date, e.type, e.created_by_user_id,
                      c.name AS category_name, c.color AS category_color,
-                     a1.name AS account_name, a2.name AS to_account_name
+                     a1.name AS account_name, a2.name AS to_account_name,
+                     cu.name AS created_by_name
               FROM expenses e
               LEFT JOIN categories c ON c.id = e.category_id
               LEFT JOIN accounts a1 ON a1.id = e.account_id
               LEFT JOIN accounts a2 ON a2.id = e.to_account_id
+              LEFT JOIN users cu ON cu.id = COALESCE(e.created_by_user_id, e.user_id)
               WHERE e.ledger_id = ? OR (e.ledger_id IS NULL AND e.user_id = ?)
               ORDER BY e.expense_date DESC, e.id DESC LIMIT 5`,
         args: [ctx.ledgerId, user.id],
@@ -75,12 +79,13 @@ export async function GET(request: NextRequest) {
                       COUNT(*) AS month_count
               FROM budget_jars b
               LEFT JOIN categories c ON c.id = b.category_id
-              LEFT JOIN expenses e ON e.user_id = b.user_id AND e.category_id = b.category_id
+              LEFT JOIN expenses e ON (e.ledger_id = b.ledger_id OR (b.ledger_id IS NULL AND e.user_id = b.user_id))
+                AND e.category_id = b.category_id
                 AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?
-              WHERE b.user_id = ? AND b.month = ?
+              WHERE (b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?)) AND b.month = ?
               GROUP BY b.id, b.month, b.budget_amount, b.rollover_amount, b.warning_percent, b.budget_basis, b.daily_amount, b.daily_limit, b.frequency_limit, b.frequency_period, c.name, c.color
               ORDER BY spent_amount DESC`,
-        args: [today, today, start, end, user.id, month],
+        args: [today, today, start, end, ctx.ledgerId, user.id, month],
       },
       {
         sql: `SELECT c.id, c.name, c.color, COALESCE(SUM(e.amount), 0) AS spent_amount
@@ -189,6 +194,13 @@ export async function GET(request: NextRequest) {
         transactionCount: Number(row?.transaction_count) || 0,
       },
       safeToSpend,
+      ledger: {
+        id: ctx.ledgerId,
+        name: ctx.activeLedgerName,
+        kind: ctx.activeLedgerKind,
+        role: ctx.activeLedgerRole,
+        isShared: ctx.activeLedgerKind !== 'personal',
+      },
       accounts,
       modules: ctx.modules,
       recent: recentResult.rows,
@@ -206,6 +218,9 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[dashboard]', error);
     return NextResponse.json({ error: 'Failed to fetch dashboard' }, { status: 500 });
   }

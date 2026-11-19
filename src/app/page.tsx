@@ -14,6 +14,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { CategoryIcon } from '@/components/CategoryIcon';
+import { LedgerSwitcher } from '@/components/LedgerSwitcher';
 import { PendingRecurringBanner } from '@/components/PendingRecurringBanner';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -39,6 +40,7 @@ interface Transaction {
   category_color: string | null;
   account_name?: string | null;
   to_account_name?: string | null;
+  created_by_name?: string | null;
 }
 
 interface DashboardAccount {
@@ -74,6 +76,13 @@ interface Dashboard {
 interface DashboardResponse {
   summary: Dashboard;
   safeToSpend?: SafeToSpendSummary;
+  ledger?: {
+    id: number;
+    name: string;
+    kind: 'personal' | 'family' | 'business';
+    role: 'owner' | 'editor' | 'viewer';
+    isShared?: boolean;
+  };
   accounts?: DashboardAccount[];
   modules?: EnabledModules;
   recent: Transaction[];
@@ -108,17 +117,28 @@ export default function DashboardPage() {
   const attentionBudgets = data?.attentionBudgets ?? null;
   const categorySpending = data?.categorySpending ?? null;
   const categoryTotal = categorySpending?.reduce((total, item) => total + Number(item.spent_amount), 0) ?? 0;
+  const isViewer = data?.ledger?.role === 'viewer';
+  const showCreatorBadge = Boolean(data?.ledger?.isShared || (data?.ledger?.kind && data.ledger.kind !== 'personal'));
 
   return (
     <div className="mx-auto min-h-screen w-full max-w-[1400px] overflow-x-hidden px-4 pb-nav pt-5 md:px-8 md:py-8 xl:px-10">
-      <header className="mb-6 flex items-center justify-between md:mb-8">
+      <header className="mb-6 flex items-center justify-between gap-3 md:mb-8">
         <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#00a970]">Tài chính</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#00a970]">
+            {data?.ledger?.name || 'Tài chính'}
+          </p>
           <h1 className="mt-1 text-xl font-semibold tracking-[-0.035em] text-slate-800 md:text-2xl">Tổng quan</h1>
           <p className="mt-0.5 text-sm text-slate-400">{getMonthLabel(month)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-        <QuickEntryAccess />
+        <div className="lg:hidden">
+          <LedgerSwitcher compact className="w-36 sm:w-44" />
+        </div>
+        {!isViewer ? <QuickEntryAccess /> : (
+          <span className="rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
+            Chỉ xem
+          </span>
+        )}
         <Link
           href="/settings"
           aria-label="Cài đặt"
@@ -273,6 +293,7 @@ export default function DashboardPage() {
                         {isTransfer
                           ? `${transaction.account_name || 'Ví nguồn'} → ${transaction.to_account_name || 'Ví đích'}`
                           : transaction.category_name} · {formatShortDate(transaction.date)}
+                        {showCreatorBadge && transaction.created_by_name ? ` · Bởi ${transaction.created_by_name}` : ''}
                       </p>
                     </div>
                     <p className={cn('max-w-[36%] shrink-0 truncate text-right text-[13px] font-semibold tabular-nums', isTransfer ? 'text-sky-700' : transaction.type === 'income' ? 'text-[#00a970]' : 'text-[#f15b64]')}>

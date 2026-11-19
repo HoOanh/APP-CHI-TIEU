@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
+import { assertLedgerAccess, LedgerAccessError, notifyOtherLedgerMembers } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
-import { getVietnamToday } from '@/lib/utils';
+import { formatCurrency, getVietnamToday } from '@/lib/utils';
+import { sendPushToUser } from '@/lib/web-push';
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,7 +15,12 @@ export async function GET(request: NextRequest) {
     }
 
     const db = await getDb();
-    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    const ctx = await ensureUserLedgerAndAccount(db, user.id);
+    const requestedLedgerParam = request.nextUrl.searchParams.get('ledger_id');
+    const ledgerId = requestedLedgerParam && /^\d+$/.test(requestedLedgerParam)
+      ? Number(requestedLedgerParam)
+      : ctx.ledgerId;
+    const grant = await assertLedgerAccess(db, user.id, ledgerId, 'viewer');
 
     const searchParams = request.nextUrl.searchParams;
     const month = searchParams.get('month');
@@ -88,7 +95,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const [summaryResult, itemsResult] = await Promise.all([
+    const [summaryResult, itemsResult, memberCountResult] = await Promise.all([
       db.execute({
         sql: `SELECT
                 COALESCE(SUM(CASE WHEN e.type = 'income' THEN e.amount ELSE 0 END), 0) AS total_income,
@@ -99,20 +106,27 @@ export async function GET(request: NextRequest) {
       }),
       db.execute({
         sql: `SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
-                     e.expense_date, e.type, e.created_at,
+                     e.expense_date, e.type, e.created_at, e.created_by_user_id,
                      c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
-                     a1.name AS account_name, a2.name AS to_account_name
+                     a1.name AS account_name, a2.name AS to_account_name,
+                     cu.name AS created_by_name, cu.avatar AS created_by_avatar
               FROM expenses e
               LEFT JOIN categories c ON e.category_id = c.id
               LEFT JOIN accounts a1 ON e.account_id = a1.id
               LEFT JOIN accounts a2 ON e.to_account_id = a2.id
+              LEFT JOIN users cu ON cu.id = COALESCE(e.created_by_user_id, e.user_id)
               ${whereSql}${cursorSql}
               ORDER BY e.expense_date DESC, e.id DESC
               LIMIT ?`,
         args: [...whereArgs, ...cursorArgs, limit + 1],
       }),
+      db.execute({
+        sql: 'SELECT COUNT(*) AS cnt FROM ledger_members WHERE ledger_id = ?',
+        args: [ledgerId],
+      }),
     ]);
 
+    const memberCount = Math.max(1, Number(memberCountResult.rows[0]?.cnt) || 1);
     const rows = itemsResult.rows;
     const hasMore = rows.length > limit;
     const items = hasMore ? rows.slice(0, limit) : rows;
@@ -132,8 +146,18 @@ export async function GET(request: NextRequest) {
       totalExpense,
       nextCursor,
       hasMore,
+      ledger: {
+        id: ledgerId,
+        name: grant.ledgerName,
+        kind: grant.ledgerKind,
+        role: grant.role,
+        isShared: grant.ledgerKind !== 'personal' || memberCount > 1,
+      },
     });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch expenses' }, { status: 500 });
   }
@@ -188,7 +212,13 @@ export async function POST(request: NextRequest) {
     }
 
     const db = await getDb();
-    const { ledgerId, defaultAccountId } = await ensureUserLedgerAndAccount(db, user.id);
+    const ctx = await ensureUserLedgerAndAccount(db, user.id);
+    const requestedLedgerId = typeof body.ledger_id === 'number' && Number.isInteger(body.ledger_id) && body.ledger_id > 0
+      ? body.ledger_id
+      : ctx.ledgerId;
+    const grant = await assertLedgerAccess(db, user.id, requestedLedgerId, 'editor');
+    const ledgerId = grant.ledgerId;
+    const defaultAccountId = ctx.defaultAccountId;
 
     const resolvedAccountId = account_id ? Number(account_id) : defaultAccountId;
     const resolvedToAccountId = isTransfer && to_account_id ? Number(to_account_id) : null;
@@ -253,18 +283,20 @@ export async function POST(request: NextRequest) {
     const newExpense = await db.execute({
       sql: `
         SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
-               e.expense_date, e.type, e.created_at,
+               e.expense_date, e.type, e.created_at, e.created_by_user_id,
                c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
-               a1.name AS account_name, a2.name AS to_account_name
+               a1.name AS account_name, a2.name AS to_account_name,
+               cu.name AS created_by_name, cu.avatar AS created_by_avatar
         FROM expenses e
         LEFT JOIN categories c ON e.category_id = c.id
         LEFT JOIN accounts a1 ON e.account_id = a1.id
         LEFT JOIN accounts a2 ON e.to_account_id = a2.id
-        WHERE e.user_id = ? AND ${clientRequestId ? 'e.client_request_id = ?' : 'e.id = ?'}
+        LEFT JOIN users cu ON cu.id = COALESCE(e.created_by_user_id, e.user_id)
+        WHERE e.ledger_id = ? AND ${clientRequestId ? 'e.user_id = ? AND e.client_request_id = ?' : 'e.id = ?'}
       `,
       args: clientRequestId
-        ? [user.id, clientRequestId]
-        : [user.id, insertResult.lastInsertRowid!]
+        ? [ledgerId, user.id, clientRequestId]
+        : [ledgerId, insertResult.lastInsertRowid!]
     });
 
     if (!newExpense.rows[0]) {
@@ -275,17 +307,33 @@ export async function POST(request: NextRequest) {
       ? await getBudgetAlert({
         db,
         userId: user.id,
+        ledgerId,
         categoryId: normalizedCategoryId,
         expenseDate: finalDate,
         addedAmount: numericAmount,
       })
       : null;
 
+    if (wasInserted) {
+      const sign = normalizedType === 'income' ? '+' : normalizedType === 'expense' ? '−' : '';
+      void notifyOtherLedgerMembers(db, sendPushToUser, {
+        ledgerId,
+        actorUserId: user.id,
+        actorName: user.name,
+        title: `Sổ "${grant.ledgerName}" vừa có giao dịch mới`,
+        body: `${normalizedDescription} (${sign}${formatCurrency(numericAmount)})`,
+        url: '/expenses',
+      }).catch(() => {});
+    }
+
     return NextResponse.json({
       ...newExpense.rows[0],
       budgetAlert,
     }, { status: wasInserted ? 201 : 200 });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to create expense' }, { status: 500 });
   }

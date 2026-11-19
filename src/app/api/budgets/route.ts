@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { evaluateBudgetJar } from '@/lib/budget-evaluator';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 import { getVietnamToday } from '@/lib/utils';
 
@@ -16,6 +17,8 @@ export async function GET(request: NextRequest) {
     if (!month) return NextResponse.json({ error: 'Month is required' }, { status: 400 });
 
     const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'viewer');
 
     const today = getVietnamToday();
     const [todayYear, todayMonth, todayDay] = today.split('-').map(Number);
@@ -51,12 +54,12 @@ export async function GET(request: NextRequest) {
               ) AS month_count
             FROM budget_jars b
             LEFT JOIN categories c ON c.id = b.category_id
-            LEFT JOIN expenses e ON e.user_id = b.user_id
+            LEFT JOIN expenses e ON (e.ledger_id = b.ledger_id OR (b.ledger_id IS NULL AND e.user_id = b.user_id))
               AND e.category_id = b.category_id
-            WHERE b.user_id = ? AND b.month = ?
+            WHERE (b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?)) AND b.month = ?
             GROUP BY b.id, c.name, c.icon, c.color
             ORDER BY c.name`,
-      args: [today, today, weekStartStr, weekEndStr, user.id, month],
+      args: [today, today, weekStartStr, weekEndStr, ledgerId, user.id, month],
     });
 
     const enriched = result.rows.map((budget) => {
@@ -103,6 +106,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(enriched);
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch budgets' }, { status: 500 });
   }
@@ -144,6 +150,7 @@ export async function POST(request: NextRequest) {
     }
     const db = await getDb();
     const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
     const category = await db.execute({
       sql: "SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?) AND kind <> 'income'",
       args: [categoryId, user.id],
@@ -151,8 +158,8 @@ export async function POST(request: NextRequest) {
     if (!category.rows[0]) return NextResponse.json({ error: 'Danh mục chi tiêu không hợp lệ.' }, { status: 400 });
 
     const existingResult = await db.execute({
-      sql: 'SELECT id FROM budget_jars WHERE user_id = ? AND category_id = ? AND month = ?',
-      args: [user.id, categoryId, month],
+      sql: 'SELECT id FROM budget_jars WHERE (ledger_id = ? OR (ledger_id IS NULL AND user_id = ?)) AND category_id = ? AND month = ?',
+      args: [ledgerId, user.id, categoryId, month],
     });
 
     if (existingResult.rows.length > 0) {
@@ -238,6 +245,9 @@ export async function POST(request: NextRequest) {
       );
     }
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to save budget' }, { status: 500 });
   }

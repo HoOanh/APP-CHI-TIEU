@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 
 interface RouteContext { params: Promise<{ id: string }> }
@@ -49,13 +50,18 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const { ledgerId, defaultAccountId } = await ensureUserLedgerAndAccount(db, user.id);
 
     const existingResult = await db.execute({
-      sql: 'SELECT amount, category_id, account_id, to_account_id, expense_date, type FROM expenses WHERE id = ? AND user_id = ?',
-      args: [id, user.id],
+      sql: 'SELECT ledger_id, user_id, amount, category_id, account_id, to_account_id, expense_date, type FROM expenses WHERE id = ?',
+      args: [id],
     });
     const previous = existingResult.rows[0];
     if (!previous) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
+    const targetLedgerId = previous.ledger_id ? Number(previous.ledger_id) : ledgerId;
+    if (!previous.ledger_id && Number(previous.user_id) !== user.id) {
+      return NextResponse.json({ error: 'Bạn không có quyền truy cập giao dịch này.' }, { status: 403 });
+    }
+    await assertLedgerAccess(db, user.id, targetLedgerId, 'editor');
 
     const resolvedAccountId = payload.account_id
       ? Number(payload.account_id)
@@ -92,7 +98,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       sql: `
         UPDATE expenses
         SET amount = ?, description = ?, note = ?, category_id = ?, account_id = ?, to_account_id = ?, expense_date = ?, type = ?
-        WHERE id = ? AND user_id = ?
+        WHERE id = ?
       `,
       args: [
         amount,
@@ -104,21 +110,22 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         expenseDate,
         type,
         id,
-        user.id,
       ]
     });
 
     const updated = await db.execute({
       sql: `
         SELECT e.*, c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
-               a1.name AS account_name, a2.name AS to_account_name
+               a1.name AS account_name, a2.name AS to_account_name,
+               cu.name AS created_by_name, cu.avatar AS created_by_avatar
         FROM expenses e
         LEFT JOIN categories c ON e.category_id = c.id
         LEFT JOIN accounts a1 ON e.account_id = a1.id
         LEFT JOIN accounts a2 ON e.to_account_id = a2.id
-        WHERE e.id = ? AND e.user_id = ?
+        LEFT JOIN users cu ON cu.id = COALESCE(e.created_by_user_id, e.user_id)
+        WHERE e.id = ?
       `,
-      args: [id, user.id]
+      args: [id]
     });
 
     if (!updated.rows[0]) {
@@ -149,6 +156,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       budgetAlert,
     });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to update expense' }, { status: 500 });
   }
@@ -169,9 +179,25 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     const db = await getDb();
+    const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+
+    const existing = await db.execute({
+      sql: 'SELECT ledger_id, user_id FROM expenses WHERE id = ? LIMIT 1',
+      args: [id],
+    });
+    const row = existing.rows[0];
+    if (!row) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+    const targetLedgerId = row.ledger_id ? Number(row.ledger_id) : ledgerId;
+    if (!row.ledger_id && Number(row.user_id) !== user.id) {
+      return NextResponse.json({ error: 'Bạn không có quyền xóa giao dịch này.' }, { status: 403 });
+    }
+    await assertLedgerAccess(db, user.id, targetLedgerId, 'editor');
+
     const deleted = await db.execute({
-      sql: 'DELETE FROM expenses WHERE id = ? AND user_id = ?',
-      args: [id, user.id]
+      sql: 'DELETE FROM expenses WHERE id = ?',
+      args: [id]
     });
 
     if (Number(deleted.rowsAffected) === 0) {
@@ -180,6 +206,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Failed to delete expense' }, { status: 500 });
   }

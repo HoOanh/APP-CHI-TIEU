@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 import { getVietnamToday } from '@/lib/utils';
 
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
     const direction = request.nextUrl.searchParams.get('direction');
     const db = await getDb();
     const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'viewer');
 
     const conditions = ['(d.ledger_id = ? OR (d.ledger_id IS NULL AND d.user_id = ?))'];
     const args: Array<string | number> = [ledgerId, user.id];
@@ -55,6 +57,9 @@ export async function GET(request: NextRequest) {
     const debts = await db.execute({ sql: query, args });
     return NextResponse.json(debts.rows);
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[GET /api/debts]', error);
     return NextResponse.json({ error: 'Failed to fetch debts' }, { status: 500 });
   }
@@ -78,6 +83,7 @@ export async function POST(request: NextRequest) {
 
     const db = await getDb();
     const { ledgerId, defaultAccountId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
     const { name, creditor, direction, account_id, total_amount, interest_rate, due_date, note } = parsed.data;
     const startDate = parsed.data.start_date || getVietnamToday();
 
@@ -116,6 +122,9 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json(newDebt.rows[0], { status: 201 });
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[POST /api/debts]', error);
     return NextResponse.json({ error: 'Failed to create debt' }, { status: 500 });
   }

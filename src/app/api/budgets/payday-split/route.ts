@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getCurrentUser } from '@/lib/current-user';
 import { getDb } from '@/lib/db';
+import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 import { getCurrentMonth } from '@/lib/utils';
 
@@ -46,6 +47,7 @@ export async function POST(request: NextRequest) {
     const targetMonth = parsed.data.month ?? getCurrentMonth();
     const db = await getDb();
     const { ledgerId } = await ensureUserLedgerAndAccount(db, user.id);
+    await assertLedgerAccess(db, user.id, ledgerId, 'editor');
 
     const tx = await db.transaction('write');
     try {
@@ -77,6 +79,9 @@ export async function POST(request: NextRequest) {
       throw error;
     }
   } catch (error) {
+    if (error instanceof LedgerAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error('[POST /api/budgets/payday-split]', error);
     return NextResponse.json({ error: 'Không thể chia hũ thu nhập.' }, { status: 500 });
   }

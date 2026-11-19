@@ -29,7 +29,9 @@ export default async function proxy(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const login = new URL('/login', request.url);
-    if (pathname === '/chat') login.searchParams.set('redirectTo', '/chat');
+    if (pathname === '/chat' || pathname.startsWith('/ledgers/invite')) {
+      login.searchParams.set('redirectTo', `${pathname}${request.nextUrl.search}`);
+    }
     return NextResponse.redirect(login);
   }
 
