@@ -2,9 +2,8 @@
  * PM2 config cho Chi Tiêu Manager.
  *
  * Production (bản standalone, giống Docker):
- *   pnpm build
- *   cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/
- *   pm2 start ecosystem.config.cjs --only chi-tieu,chi-tieu-cron
+ *   bash deploy/deploy.sh
+ *   (build, chép bản build sang .release/ rồi start/reload chi-tieu + chi-tieu-cron)
  *
  * Dev:
  *   pm2 start ecosystem.config.cjs --only chi-tieu-dev
@@ -20,7 +19,8 @@ module.exports = {
     {
       name: 'chi-tieu',
       cwd: __dirname,
-      script: '.next/standalone/server.js',
+      // Chạy từ .release/ (không phải .next/standalone) để lúc build lại app đang chạy không bị ảnh hưởng.
+      script: '.release/server.js',
       node_args: '--env-file-if-exists=.env.production',
       instances: 1,
       exec_mode: 'fork',
