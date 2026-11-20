@@ -8,8 +8,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [ ! -f .env.production ]; then
-  echo "Thiếu .env.production ở $(pwd)" >&2
+if [ ! -f .env.production ] && [ ! -f .env ]; then
+  echo "Thiếu .env.production (hoặc .env) ở $(pwd)" >&2
   exit 1
 fi
 

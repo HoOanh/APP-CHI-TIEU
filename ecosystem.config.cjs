@@ -8,7 +8,7 @@
  * Dev:
  *   pm2 start ecosystem.config.cjs --only chi-tieu-dev
  *
- * Biến môi trường production đọc từ .env.production (NEXTAUTH_URL, NEXTAUTH_SECRET,
+ * Biến môi trường production đọc từ .env rồi .env.production (file sau đè file trước) (NEXTAUTH_URL, NEXTAUTH_SECRET,
  * GEMINI_API_KEY, CRON_SECRET, ...). Các giá trị trong `env` bên dưới sẽ đè lên file đó.
  */
 
@@ -21,7 +21,7 @@ module.exports = {
       cwd: __dirname,
       // Chạy từ .release/ (không phải .next/standalone) để lúc build lại app đang chạy không bị ảnh hưởng.
       script: '.release/server.js',
-      node_args: '--env-file-if-exists=.env.production',
+      node_args: '--env-file-if-exists=.env --env-file-if-exists=.env.production',
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
@@ -44,7 +44,7 @@ module.exports = {
       name: 'chi-tieu-cron',
       cwd: __dirname,
       script: 'scripts/pm2-cron.mjs',
-      node_args: '--env-file-if-exists=.env.production',
+      node_args: '--env-file-if-exists=.env --env-file-if-exists=.env.production',
       cron_restart: '*/15 * * * *',
       autorestart: false,
       time: true,
