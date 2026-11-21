@@ -2,14 +2,14 @@
 
 ## Server configuration
 
-Web Push is sent by the Vercel cron route. Add these environment variables to the Vercel project (Production and Preview only if those deployments should send notifications):
+The self-hosted app sends Web Push from its internal cron route. Add these environment variables to the server's production environment:
 
 | Variable | Value |
 | --- | --- |
 | `WEB_PUSH_VAPID_PUBLIC_KEY` | Public key from `web-push generate-vapid-keys` |
 | `WEB_PUSH_VAPID_PRIVATE_KEY` | Private key from the same command; keep it secret |
 | `WEB_PUSH_VAPID_SUBJECT` | A contact URI such as `mailto:you@example.com` |
-| `CRON_SECRET` | A long random value used to authenticate the Vercel cron request |
+| `CRON_SECRET` | A long random value used to authenticate the internal cron request |
 
 Generate a VAPID key pair locally with:
 
@@ -23,7 +23,7 @@ Generate a cron secret with:
 openssl rand -base64 32
 ```
 
-Keep the same VAPID key pair after deployment. Changing it invalidates existing device subscriptions; users will need to enable notifications again. The cron checks preferences every five minutes and sends reminders using `Asia/Ho_Chi_Minh`. Notification messages are intentionally generic and do not include transaction amounts.
+Keep the same VAPID key pair after deployment. Changing it invalidates existing device subscriptions; users will need to enable notifications again. The self-hosted cron checks preferences every 15 minutes and sends reminders using `Asia/Ho_Chi_Minh`. Notification messages are intentionally generic and do not include transaction amounts.
 
 ## Enable notifications
 

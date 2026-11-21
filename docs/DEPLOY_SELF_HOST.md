@@ -1,6 +1,15 @@
 # Hướng dẫn triển khai Self-Host trên Server Vật Lý (`v2.1.0`)
 
-Tài liệu hướng dẫn chuyển dịch từ Turso Cloud / Vercel sang **Server vật lý (Ubuntu/Debian Linux)** chạy toàn bộ bằng Docker Compose (`Next.js Standalone` + `libsql-server (sqld)` + `Cron Worker`).
+Ứng dụng hỗ trợ self-host trên Ubuntu/Debian với Nginx và PM2 hoặc Docker Compose.
+
+## Nginx và PM2
+
+- Cấu hình hiện tại dùng [spending.arc-irobot.tech](https://spending.arc-irobot.tech) và chuyển tiếp tới cổng `3210` theo [mẫu Nginx](../deploy/nginx/spending.arc-irobot.tech.conf).
+- Đặt `AUTH_URL` và `NEXTAUTH_URL` thành `https://spending.arc-irobot.tech` trong `.env.production`. Nếu bật Google OAuth, khai báo origin này và callback `https://spending.arc-irobot.tech/api/auth/callback/google` trong Google Cloud Console.
+- Chạy `bash deploy/deploy.sh` để build bản standalone và reload cả `chi-tieu` lẫn `chi-tieu-cron`. Sau khi deploy, kiểm tra lượt chạy của cron bằng `pm2 logs chi-tieu-cron --lines 10 --nostream`.
+- Nginx dùng header `X-Accel-Buffering: no` do Next.js trả về để chuyển tiếp màn chờ trong khi trang còn tải. Nếu cấu hình Nginx có `proxy_ignore_headers X-Accel-Buffering`, bỏ chỉ thị đó cho ứng dụng.
+
+## Docker Compose
 
 ---
 

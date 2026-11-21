@@ -1,6 +1,6 @@
 # Hướng dẫn Triển khai (Deployment Guide)
 
-Tài liệu này hướng dẫn cách deploy ứng dụng Chi Tiêu Manager lên Vercel và thiết lập Database trên Turso.
+Tài liệu lưu cấu hình triển khai cũ trên Vercel và Turso. Với môi trường hiện tại, xem [hướng dẫn self-host bằng Nginx và PM2](./DEPLOY_SELF_HOST.md#nginx-và-pm2).
 
 ## Yêu cầu chuẩn bị (Prerequisites)
 - Tài khoản GitHub.

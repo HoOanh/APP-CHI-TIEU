@@ -16,6 +16,11 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        source: '/:path*',
+        has: [{ type: 'header', key: 'accept', value: '.*text/html.*' }],
+        headers: [{ key: 'X-Accel-Buffering', value: 'no' }],
+      },
+      {
         source: '/sw.js',
         headers: [
           { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },

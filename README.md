@@ -63,7 +63,7 @@ Truy cập `http://localhost:8080` để xem ứng dụng.
 - [User Stories](./docs/USER_STORIES.md)
 - [Hướng dẫn sử dụng](./docs/USER_GUIDE.md)
 - [Báo cáo kiểm thử](./docs/TEST_REPORT.md)
-- [Hướng dẫn triển khai (DEPLOY)](./docs/DEPLOY.md)
+- [Hướng dẫn triển khai trên Nginx và PM2](./docs/DEPLOY_SELF_HOST.md#nginx-và-pm2)
 
 - [Kế hoạch nâng cấp](./docs/UPGRADE_ROADMAP.md)
 

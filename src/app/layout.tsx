@@ -1,10 +1,13 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import "./globals.css";
+import { AppLoading } from "@/components/AppLoading";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
 import { AppShell } from "@/components/AppShell";
 import { getCurrentUser } from "@/lib/current-user";
 import { PwaServiceWorker } from "@/components/PwaServiceWorker";
+import { appleStartupImages } from "./apple-startup-images";
 
 export const metadata: Metadata = {
   applicationName: "ARC Irobot",
@@ -14,6 +17,7 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: "default",
     title: "ARC Irobot",
+    startupImage: appleStartupImages,
   },
   icons: {
     icon: [
@@ -31,22 +35,30 @@ export const viewport: Viewport = {
   themeColor: "#00b878",
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const user = await getCurrentUser();
-
   return (
     <html lang="vi" data-scroll-behavior="smooth">
       <body className="min-h-dvh font-sans">
         <PwaServiceWorker />
-        <TooltipProvider>
-          <AppShell user={user}>{children}</AppShell>
-          <Toaster />
-        </TooltipProvider>
+        <Suspense fallback={<AppLoading fullScreen />}>
+          <SessionLayout>{children}</SessionLayout>
+        </Suspense>
       </body>
     </html>
+  );
+}
+
+async function SessionLayout({ children }: { children: React.ReactNode }) {
+  const user = await getCurrentUser();
+
+  return (
+    <TooltipProvider>
+      <AppShell user={user}>{children}</AppShell>
+      <Toaster />
+    </TooltipProvider>
   );
 }
