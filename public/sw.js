@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'arc-irobot-';
-const STATIC_CACHE = `${CACHE_PREFIX}static-v4`;
+const STATIC_CACHE = `${CACHE_PREFIX}static-v5`;
 const OFFLINE_URL = '/offline.html';
 const APP_ASSETS = [
   OFFLINE_URL,

@@ -39,12 +39,14 @@ export function BudgetDesktopTable({
                 : budget.budget_basis === 'daily'
                   ? budget.daily_amount
                   : 0;
+              const onlyAlertOnOverspend = budget.warning_percent > 100;
+              const isOver = onlyAlertOnOverspend ? budget.spent_amount > effectiveBudget : pct >= 100;
               const isDailyOver = effectiveDailyLimit > 0 && budget.today_spent > effectiveDailyLimit;
-              const hasDanger = pct >= 100 || isDailyOver || Boolean(budget.alerts?.some((alert) => alert.severity === 'danger'));
-              const isWarning = !hasDanger && (pct >= budget.warning_percent || Boolean(budget.alerts?.some((alert) => alert.severity === 'warning')));
+              const hasDanger = isOver || isDailyOver || Boolean(budget.alerts?.some((alert) => alert.severity === 'danger'));
+              const isWarning = !hasDanger && ((!onlyAlertOnOverspend && pct >= budget.warning_percent) || Boolean(budget.alerts?.some((alert) => alert.severity === 'warning')));
               const tone = hasDanger ? 'text-rose-600' : isWarning ? 'text-amber-600' : 'text-emerald-600';
-              const statusLabel = pct >= 100
-                ? '🚨 Đã vượt ngân sách tháng'
+              const statusLabel = isOver
+                ? (budget.spent_amount > effectiveBudget ? '🚨 Đã vượt ngân sách tháng' : '🚨 Chạm trần 100%')
                 : isDailyOver
                   ? `🚨 Lố định mức ngày (${formatCurrency(budget.today_spent)}/${formatCurrency(effectiveDailyLimit)})`
                   : hasDanger
@@ -57,7 +59,7 @@ export function BudgetDesktopTable({
                 <tr key={budget.id} className={cn('group transition-colors', hasDanger ? 'bg-rose-50/70 hover:bg-rose-100/60' : 'hover:bg-muted/30')}>
                   <td className="px-6 py-4">
                     <span className="inline-flex items-center gap-3">
-                      <CategoryIcon name={budget.category_name} color={budget.category_color} className="size-9 rounded-xl" />
+                      <CategoryIcon name={budget.category_name} icon={budget.category_icon} color={budget.category_color} className="size-9 rounded-xl" />
                       <span>
                         <span className="block font-semibold text-foreground">{budget.category_name}</span>
                         {budget.budget_basis === 'daily' ? (

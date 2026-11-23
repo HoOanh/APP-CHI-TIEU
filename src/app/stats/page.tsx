@@ -16,7 +16,7 @@ import { cn, formatCurrency, formatShortDate, getCurrentMonth, getPercentage } f
 
 const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
 
-interface CategoryPoint { category_name: string; category_color: string; total: number; count: number; }
+interface CategoryPoint { category_name: string; category_icon?: string; category_color: string; total: number; count: number; }
 interface DatePoint { date: string; total: number; }
 interface TagPnlPoint {
   tag_id: number;
@@ -95,8 +95,17 @@ export default function StatsPage() {
 
   return (
     <div className="mx-auto min-h-screen w-full max-w-7xl bg-[#f7f9fb] pb-nav">
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
-        <div className="flex items-center justify-between gap-2"><div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h1></div><PeriodPicker period={period} month={month} year={year} onMonth={setMonth} onYear={setYear} /></div>
+      <header className="sticky top-0 z-20 border-b border-slate-200/90 bg-[#f7f9fb]/95 px-4 pb-3.5 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#00a970]">
+              <span className="size-1.5 rounded-full bg-[#00bc7c]" />
+              Phân tích{data?.ledgerName ? ` · ${data.ledgerName}` : ''}
+            </p>
+            <h1 className="mt-0.5 text-xl font-bold tracking-[-0.03em] text-slate-900 md:text-2xl">Thống kê chi tiêu</h1>
+          </div>
+          <PeriodPicker period={period} month={month} year={year} onMonth={setMonth} onYear={setYear} />
+        </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <Tabs value={period} onValueChange={(value) => setPeriod(value as Period)}><TabsList className="grid w-full grid-cols-4 md:max-w-sm rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
           {availableTags.length > 0 || activeTag !== 'all' ? (
@@ -118,48 +127,77 @@ export default function StatsPage() {
 
       <main className="space-y-5 px-4 py-5 md:px-8 md:py-7 lg:grid lg:grid-cols-2 lg:items-start lg:gap-6 lg:space-y-0">
         {error ? <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-white p-4 lg:col-span-2"><p className="text-sm text-rose-800">Không tải được thống kê kỳ này.</p><Button variant="outline" onClick={() => void mutate()}>Thử lại</Button></div> : isLoading ? <div className="lg:col-span-2"><StatsSkeleton /></div> : data ? <>
-          <section className="overflow-hidden rounded-[22px] bg-[#344554] p-5 text-white shadow-[0_18px_36px_-25px_rgba(39,55,73,0.8)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">Tổng chi tiêu</p>
-            <p className="mt-2 text-[31px] font-semibold leading-none tracking-[-0.055em] tabular-nums">{formatCurrency(data.total)}</p>
-            <div className="mt-4 flex items-center justify-between border-t border-white/15 pt-3 text-xs"><span className="flex items-center gap-1.5 text-white/65">{change !== null && change <= 0 ? <TrendingDown className="size-3.5 text-emerald-300" /> : <TrendingUp className="size-3.5 text-rose-300" />}{change === null ? 'Chưa có kỳ đối chiếu' : `${Math.abs(change).toFixed(0)}% ${change <= 0 ? 'thấp hơn' : 'cao hơn'} ${data.comparison_label}`}</span><span className="font-medium text-white/80">{data.count} giao dịch</span></div>
+          <section className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-[#00c482] via-[#00bc7c] to-[#00a36c] p-5 text-white shadow-[0_18px_36px_-22px_rgba(0,188,124,0.7)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/80">Tổng chi tiêu</p>
+            <p className="mt-2 text-[31px] font-bold leading-none tracking-[-0.04em] tabular-nums">{formatCurrency(data.total)}</p>
+            <div className="mt-4 flex items-center justify-between border-t border-white/20 pt-3 text-xs">
+              <span className="flex items-center gap-1.5 text-white/90">
+                {change !== null && change <= 0 ? <TrendingDown className="size-3.5 text-white" /> : <TrendingUp className="size-3.5 text-rose-100" />}
+                {change === null ? 'Chưa có kỳ đối chiếu' : `${Math.abs(change).toFixed(0)}% ${change <= 0 ? 'thấp hơn' : 'cao hơn'} ${data.comparison_label}`}
+              </span>
+              <span className="font-semibold text-white">{data.count} giao dịch</span>
+            </div>
           </section>
 
-          <section className="grid grid-cols-2 divide-x divide-slate-200 rounded-2xl border border-slate-200 bg-white py-3"><Metric icon={ReceiptText} label="Trung bình" value={formatCurrency(data.daily_average)} suffix={period === 'daily' ? '/ ngày' : '/ kỳ'} /><Metric icon={WalletCards} label="Danh mục nhiều nhất" value={topCategory?.category_name || 'Chưa có'} suffix={topCategory ? formatCurrency(topCategory.total) : ''} className="pl-4" /></section>
+          <section className="grid grid-cols-2 divide-x divide-slate-200 rounded-2xl border border-slate-200/90 bg-white py-3.5 shadow-2xs">
+            <Metric icon={ReceiptText} label="Trung bình" value={formatCurrency(data.daily_average)} suffix={period === 'daily' ? '/ ngày' : '/ kỳ'} />
+            <Metric icon={WalletCards} label="Chi nhiều nhất" value={topCategory?.category_name || 'Chưa có'} suffix={topCategory ? formatCurrency(topCategory.total) : ''} className="pl-4" />
+          </section>
 
-          <section className="grid grid-cols-2 gap-3 lg:col-span-2 sm:grid-cols-3">
-            <Insight
-              title="Tổng thu kỳ này"
-              value={`+${formatCurrency(data.income_total ?? 0)}`}
-              detail={`Tiết kiệm ròng: ${(data.net_savings ?? 0) >= 0 ? '+' : '−'}${formatCurrency(Math.abs(data.net_savings ?? 0))}`}
-              tone="mint"
-            />
-            <Insight
-              title="Tỷ lệ tiết kiệm (Saving Rate)"
-              value={`${data.saving_rate_percent ?? 0}%`}
-              detail={(data.income_total ?? 0) > 0 ? 'Phần trăm thu nhập giữ lại' : 'Chưa có giao dịch thu kỳ này'}
-              tone={(data.saving_rate_percent ?? 0) >= 20 ? 'mint' : 'rose'}
-            />
-            <Insight
-              title="Runway dự phòng"
-              value={data.runway_months !== null && data.runway_months !== undefined ? `${data.runway_months} tháng` : '—'}
-              detail={data.liquid_balance !== undefined ? `Số dư hiện có: ${formatCurrency(data.liquid_balance)}` : 'Dựa trên mức chi hiện tại'}
-              tone="mint"
-            />
+          <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs lg:col-span-2">
+            <div className="grid grid-cols-2 md:grid-cols-4">
+              <div className="border-b border-r border-slate-100 p-4 md:border-b-0">
+                <p className="text-[11px] font-medium text-slate-500">Tổng thu kỳ này</p>
+                <p className="mt-1 text-base font-bold tabular-nums text-slate-900">
+                  +{formatCurrency(data.income_total ?? 0)}
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                  Thu nhập ghi nhận
+                </p>
+              </div>
+              <div className="border-b border-slate-100 p-4 md:border-b-0 md:border-r">
+                <p className="text-[11px] font-medium text-slate-500">Chênh lệch thu chi</p>
+                <p className={cn('mt-1 text-base font-bold tabular-nums', (data.net_savings ?? 0) >= 0 ? 'text-[#00a970]' : 'text-rose-600')}>
+                  {(data.net_savings ?? 0) >= 0 ? '+' : '−'}{formatCurrency(Math.abs(data.net_savings ?? 0))}
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                  {(data.net_savings ?? 0) >= 0 ? 'Thặng dư trong kỳ' : 'Chi vượt thu'}
+                </p>
+              </div>
+              <div className="border-r border-slate-100 p-4">
+                <p className="text-[11px] font-medium text-slate-500">Tỷ lệ giữ lại</p>
+                <p className={cn('mt-1 text-base font-bold tabular-nums', (data.saving_rate_percent ?? 0) >= 20 ? 'text-[#00a970]' : 'text-slate-900')}>
+                  {data.saving_rate_percent ?? 0}%
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                  {(data.income_total ?? 0) > 0 ? 'Trên tổng thu nhập' : 'Chưa có khoản thu'}
+                </p>
+              </div>
+              <div className="p-4">
+                <p className="text-[11px] font-medium text-slate-500">Quỹ dự phòng</p>
+                <p className="mt-1 text-base font-bold tabular-nums text-slate-900">
+                  {data.runway_months !== null && data.runway_months !== undefined ? `${data.runway_months} tháng` : '—'}
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                  {data.liquid_balance !== undefined ? `Số dư: ${formatCurrency(data.liquid_balance)}` : 'Theo mức chi hiện tại'}
+                </p>
+              </div>
+            </div>
           </section>
 
           {showBusinessPnl && data.pnl ? (
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white lg:col-span-2">
+            <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs lg:col-span-2">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
                 <div>
                   <h2 className="text-[15px] font-semibold text-slate-800">
-                    Báo cáo Lãi / Lỗ (P&L) &amp; Hoàn ứng
+                    Doanh thu, chi phí &amp; hoàn ứng
                   </h2>
                   <p className="mt-0.5 text-xs text-slate-400">
-                    {data.ledgerName || 'Sổ tài chính'} · Tổng hợp doanh thu, chi phí vận hành và theo dõi `#tag`
+                    {data.ledgerName || 'Sổ tài chính'} · Tổng hợp thu chi theo thẻ ghi chú
                   </p>
                 </div>
                 {data.pnl.pending_reimburse_count > 0 ? (
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                  <span className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
                     {data.pnl.pending_reimburse_count} khoản chờ hoàn ứng ({formatCurrency(data.pnl.pending_reimburse_total)})
                   </span>
                 ) : null}
@@ -178,12 +216,12 @@ export default function StatsPage() {
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
-                  <p className="text-[11px] text-slate-500">Lợi nhuận ròng (P&amp;L)</p>
+                  <p className="text-[11px] text-slate-500">Lợi nhuận ròng</p>
                   <p className={cn('mt-1 text-base font-bold tabular-nums', data.pnl.gross_profit >= 0 ? 'text-[#00a970]' : 'text-[#f15b64]')}>
                     {data.pnl.gross_profit >= 0 ? '+' : '−'}{formatCurrency(Math.abs(data.pnl.gross_profit))}
                   </p>
                   {data.pnl.margin_percent !== null ? (
-                    <p className="mt-0.5 text-[10px] text-slate-500">Biên LN: {data.pnl.margin_percent}%</p>
+                    <p className="mt-0.5 text-[10px] text-slate-500">Biên lợi nhuận: {data.pnl.margin_percent}%</p>
                   ) : null}
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
@@ -224,8 +262,19 @@ export default function StatsPage() {
 
           {data.total > 0 ? <>
             <div className="lg:col-span-2"><StatsCharts byDate={data.by_date} period={period} total={data.total} /></div>
-            <section className="grid grid-cols-2 gap-3"><Insight title="Ngày chi cao nhất" value={peak ? formatCurrency(peak.total) : '—'} detail={peak ? (period === 'daily' ? formatShortDate(peak.date) : peak.date) : ''} tone="rose" /><Insight title="Tỷ trọng lớn nhất" value={topCategory ? `${Math.round(getPercentage(topCategory.total, data.total))}%` : '—'} detail={topCategory?.category_name || ''} tone="mint" /></section>
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white lg:col-span-2"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-[15px] font-semibold text-slate-800">Cơ cấu chi tiêu</h2><p className="mt-0.5 text-xs text-slate-400">Danh mục theo tỷ trọng trong kỳ đã chọn</p></div><div className="divide-y divide-slate-100 lg:grid lg:grid-cols-2 lg:divide-y-0 lg:divide-x">{data.by_category.map((item) => <CategoryRow key={item.category_name} item={item} total={data.total} />)}</div></section>
+            <section className="grid grid-cols-2 divide-x divide-slate-100 rounded-2xl border border-slate-200/90 bg-white shadow-2xs lg:col-span-2">
+              <div className="min-w-0 p-4">
+                <p className="text-[11px] font-medium text-slate-500">Ngày chi cao nhất</p>
+                <p className="mt-1 truncate text-base font-bold tabular-nums text-[#f15b64]">{peak ? formatCurrency(peak.total) : '—'}</p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400">{peak ? (period === 'daily' ? formatShortDate(peak.date) : peak.date) : ''}</p>
+              </div>
+              <div className="min-w-0 p-4">
+                <p className="text-[11px] font-medium text-slate-500">Tỷ trọng lớn nhất</p>
+                <p className="mt-1 truncate text-base font-bold tabular-nums text-slate-900">{topCategory ? `${Math.round(getPercentage(topCategory.total, data.total))}%` : '—'}</p>
+                <p className="mt-0.5 truncate text-[11px] text-slate-400">{topCategory?.category_name || ''}</p>
+              </div>
+            </section>
+            <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-2xs lg:col-span-2"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-[15px] font-semibold text-slate-800">Cơ cấu chi tiêu</h2><p className="mt-0.5 text-xs text-slate-400">Danh mục theo tỷ trọng trong kỳ đã chọn</p></div><div className="divide-y divide-slate-100 lg:grid lg:grid-cols-2 lg:divide-y-0 lg:divide-x">{data.by_category.map((item) => <CategoryRow key={item.category_name} item={item} total={data.total} />)}</div></section>
           </> : <div className="lg:col-span-2"><EmptyStats /></div>}
         </> : <div className="lg:col-span-2"><EmptyStats /></div>}
       </main>
@@ -239,16 +288,12 @@ function PeriodPicker({ period, month, year, onMonth, onYear }: { period: Period
 }
 
 function Metric({ icon: Icon, label, value, suffix, className }: { icon: typeof ReceiptText; label: string; value: string; suffix: string; className?: string }) {
-  return <div className={cn('min-w-0 px-3.5', className)}><p className="flex items-center gap-1.5 text-[11px] text-slate-400"><Icon className="size-3.5 text-[#00a970]" />{label}</p><p className="mt-1 truncate text-[15px] font-semibold text-slate-700">{value}</p><p className="mt-0.5 truncate text-[11px] text-slate-400">{suffix}</p></div>;
-}
-
-function Insight({ title, value, detail, tone }: { title: string; value: string; detail: string; tone: 'rose' | 'mint' }) {
-  return <div className={cn('rounded-2xl border p-3.5', tone === 'rose' ? 'border-rose-100 bg-rose-50/50' : 'border-emerald-100 bg-emerald-50/50')}><p className="text-[11px] text-slate-400">{title}</p><p className={cn('mt-1 text-base font-semibold tabular-nums', tone === 'rose' ? 'text-[#f15b64]' : 'text-[#00a970]')}>{value}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{detail}</p></div>;
+  return <div className={cn('min-w-0 px-4', className)}><p className="flex items-center gap-1.5 text-[11px] text-slate-500"><Icon className="size-3.5 text-[#00a970]" />{label}</p><p className="mt-1 truncate text-[15px] font-bold text-slate-900">{value}</p><p className="mt-0.5 truncate text-[11px] text-slate-400">{suffix}</p></div>;
 }
 
 function CategoryRow({ item, total }: { item: CategoryPoint; total: number }) {
   const percentage = getPercentage(item.total, total);
-  return <div className="px-4 py-3.5"><div className="flex items-center gap-3"><CategoryIcon name={item.category_name} color={item.category_color} className="size-9 rounded-xl" iconClassName="size-4" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-700">{item.category_name}</p><p className="mt-0.5 text-[11px] text-slate-400">{item.count} giao dịch · {Math.round(percentage)}%</p></div><p className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(item.total)}</p></div><Progress value={percentage} className="mt-2.5 h-1.5" indicatorColor="bg-[#00bc7c]" /></div>;
+  return <div className="px-4 py-3.5"><div className="flex items-center gap-3"><CategoryIcon name={item.category_name} icon={item.category_icon} color={item.category_color} className="size-9 rounded-xl" iconClassName="size-4" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-700">{item.category_name}</p><p className="mt-0.5 text-[11px] text-slate-400">{item.count} giao dịch · {Math.round(percentage)}%</p></div><p className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(item.total)}</p></div><Progress value={percentage} className="mt-2.5 h-1.5" indicatorColor="bg-[#00bc7c]" /></div>;
 }
 
 function StatsSkeleton() { return <div className="space-y-4"><Skeleton className="h-36 w-full rounded-[22px]" /><Skeleton className="h-20 w-full rounded-2xl" /><Skeleton className="h-[190px] w-full rounded-2xl" /></div>; }

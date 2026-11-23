@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client';
 
 export const UNCLASSIFIED_EXPENSE = 'Chưa phân loại';
-const SCHEMA_VERSION = '2026-11-v2.1-s6';
+export const SCHEMA_VERSION = '2026-11-v2.3-cat-overrides';
 
 export async function initializeDatabase(db: Client) {
   await db.execute('PRAGMA foreign_keys = ON').catch(() => {});
@@ -105,6 +105,18 @@ export async function initializeDatabase(db: Client) {
       FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS category_overrides (
+      user_id INTEGER NOT NULL,
+      category_id INTEGER NOT NULL,
+      name TEXT,
+      icon TEXT,
+      color TEXT,
+      kind TEXT,
+      PRIMARY KEY (user_id, category_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS expenses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
@@ -143,7 +155,7 @@ export async function initializeDatabase(db: Client) {
       category_id INTEGER NOT NULL,
       month TEXT NOT NULL,
       budget_amount REAL NOT NULL,
-      warning_percent REAL NOT NULL DEFAULT 80,
+      warning_percent REAL NOT NULL DEFAULT 101,
       daily_limit REAL DEFAULT 0,
       budget_basis TEXT NOT NULL DEFAULT 'monthly',
       daily_amount REAL NOT NULL DEFAULT 0,

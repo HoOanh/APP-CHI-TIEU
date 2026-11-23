@@ -111,7 +111,7 @@ export function PwaReminderSettings() {
     setIsTogglingPush(true);
     try {
       if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-        throw new Error('Trình duyệt này chưa hỗ trợ thông báo PWA.');
+        throw new Error('Trình duyệt này chưa hỗ trợ nhận thông báo.');
       }
 
       const existingRegistration = await navigator.serviceWorker.getRegistration('/');
@@ -196,8 +196,8 @@ export function PwaReminderSettings() {
         <div className="flex items-start gap-3">
           <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-emerald-50 text-emerald-600"><Bell className="size-5" /></span>
           <div>
-            <h2 className="text-sm font-semibold text-slate-800">Nhắc nhở & phân tích AI</h2>
-            <p className="mt-1 max-w-xl text-xs leading-relaxed text-slate-500">Lịch được tính theo giờ Việt Nam. Nội dung notification không hiển thị số tiền trên màn hình khóa.</p>
+            <h2 className="text-sm font-semibold text-slate-800">Nhắc nhở &amp; Tổng kết tuần</h2>
+            <p className="mt-1 max-w-xl text-xs leading-relaxed text-slate-500">Lịch gửi theo giờ Việt Nam. Thông báo ngoài màn hình khóa được ẩn số tiền để đảm bảo riêng tư.</p>
           </div>
         </div>
         <Button type="button" variant={push.subscribed ? 'outline' : 'default'} className="min-h-10 shrink-0 rounded-xl" onClick={() => void togglePush()} disabled={isLoading || isTogglingPush || (!push.configured && !push.subscribed)}>
@@ -219,7 +219,7 @@ export function PwaReminderSettings() {
         <div className="rounded-2xl border border-slate-200 p-4">
           <div className="flex items-center gap-3">
             <Switch checked={reminders.weeklyEnabled} onCheckedChange={(checked) => update('weeklyEnabled', checked)} disabled={isLoading} aria-label="Bật phân tích tài chính hằng tuần" />
-            <span className="min-w-0 flex-1"><span className="block text-sm font-medium text-slate-800">Phân tích tài chính hằng tuần</span><span className="mt-0.5 block text-xs text-slate-500">AI tổng kết xu hướng và gửi notification</span></span>
+            <span className="min-w-0 flex-1"><span className="block text-sm font-medium text-slate-800">Tổng kết chi tiêu hằng tuần</span><span className="mt-0.5 block text-xs text-slate-500">Tóm tắt xu hướng chi tiêu và gửi thông báo</span></span>
             <CalendarClock className="size-5 text-emerald-600" />
           </div>
           <div className="mt-3 flex gap-2 pl-7">
@@ -233,7 +233,7 @@ export function PwaReminderSettings() {
       </div>
 
       <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs text-slate-500">Thông báo chỉ gửi khi đã bật trên thiết bị này. Hãy thêm PWA vào Màn hình chính trên iPhone trước khi đăng ký.</p>
+        <p className="text-xs text-slate-500">Trên iPhone, hãy thêm trang web vào Màn hình chính trước khi bật thông báo.</p>
         <Button type="button" variant="outline" className="min-h-10 shrink-0 rounded-xl" disabled={isLoading || isSaving} onClick={() => void saveReminders(reminders)}>
           {isSaving && <LoaderCircle className="size-4 animate-spin" />}{isSaving ? 'Đang lưu...' : 'Lưu lịch nhắc'}
         </Button>

@@ -18,7 +18,7 @@ export default async function proxy(request: NextRequest) {
   if (
     !isGoogleAuthConfigured()
     && process.env.NODE_ENV !== 'production'
-    && process.env.ALLOW_LOCAL_DEV_BYPASS !== 'false'
+    && process.env.ALLOW_LOCAL_DEV_BYPASS === 'true'
   ) {
     return NextResponse.next();
   }
@@ -39,5 +39,5 @@ export default async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon\\.ico$|sw\\.js$|offline\\.html$|(?:manifest|ghi-nhanh)\\.webmanifest$|ghi-nhanh\\.webloc$|arc-irobot\\.png$|pwa-(?:192|512)\\.png$|pwa-startup/|pwa-icon\\.svg$|icon\\.png$|api/auth).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon\\.ico$|sw\\.js$|offline\\.html$|(?:manifest|ghi-nhanh)\\.webmanifest$|ghi-nhanh\\.webloc$|arc-irobot\\.png$|pwa-(?:192|512)\\.png$|pwa-icon\\.svg$|icon\\.png$|api/auth).*)'],
 };

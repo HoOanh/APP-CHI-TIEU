@@ -4,6 +4,7 @@ import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
 import { assertLedgerAccess, LedgerAccessError, notifyOtherLedgerMembers } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
+import { UNCLASSIFIED_EXPENSE } from '@/lib/schema';
 import { getTagsForExpenses, normalizeTagName, syncExpenseTags } from '@/lib/tags';
 import { formatCurrency, getVietnamToday } from '@/lib/utils';
 import { sendPushToUser } from '@/lib/web-push';
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
     const typeFilter = searchParams.get('type');
     const accountIdParam = searchParams.get('account_id');
     const categoryId = searchParams.get('category_id');
+    const unplannedParam = searchParams.get('unplanned');
     const tagParam = searchParams.get('tag')?.trim();
     const reimburseParam = searchParams.get('reimburse_status')?.trim();
     const search = searchParams.get('search')?.trim();
@@ -75,8 +77,23 @@ export async function GET(request: NextRequest) {
     }
 
     if (categoryId && categoryId !== 'all') {
-      whereSql += ' AND e.category_id = ?';
-      whereArgs.push(categoryId);
+      if (categoryId === 'unclassified') {
+        whereSql += ' AND (e.category_id IS NULL OR c.name = ?)';
+        whereArgs.push(UNCLASSIFIED_EXPENSE);
+      } else {
+        whereSql += ' AND e.category_id = ?';
+        whereArgs.push(categoryId);
+      }
+    }
+
+    if (unplannedParam === '1' || unplannedParam === 'true') {
+      whereSql += ` AND e.type = 'expense' AND (e.category_id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM budget_jars b
+        WHERE (b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?))
+          AND b.category_id = e.category_id
+          AND b.month = strftime('%Y-%m', e.expense_date)
+      ))`;
+      whereArgs.push(ledgerId, user.id);
     }
 
     if (tagParam && tagParam !== 'all') {
@@ -127,18 +144,27 @@ export async function GET(request: NextRequest) {
       db.execute({
         sql: `SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
                      e.expense_date, e.type, e.reimburse_status, e.created_at, e.created_by_user_id,
-                     c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
+                     COALESCE(co.name, c.name, '${UNCLASSIFIED_EXPENSE}') AS category_name,
+                     COALESCE(co.icon, c.icon, 'tag') AS category_icon,
+                     COALESCE(co.color, c.color, '#64748B') AS category_color,
                      a1.name AS account_name, a2.name AS to_account_name,
-                     cu.name AS created_by_name, cu.avatar AS created_by_avatar
+                     cu.name AS created_by_name, cu.avatar AS created_by_avatar,
+                     CASE WHEN e.type = 'expense' AND e.category_id IS NOT NULL AND EXISTS (
+                       SELECT 1 FROM budget_jars b
+                       WHERE (b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?))
+                         AND b.category_id = e.category_id
+                         AND b.month = strftime('%Y-%m', e.expense_date)
+                     ) THEN 1 ELSE 0 END AS in_budget_jar
               FROM expenses e
               LEFT JOIN categories c ON e.category_id = c.id
+              LEFT JOIN category_overrides co ON co.category_id = c.id AND co.user_id = ?
               LEFT JOIN accounts a1 ON e.account_id = a1.id
               LEFT JOIN accounts a2 ON e.to_account_id = a2.id
               LEFT JOIN users cu ON cu.id = COALESCE(e.created_by_user_id, e.user_id)
               ${whereSql}${cursorSql}
               ORDER BY e.expense_date DESC, e.id DESC
               LIMIT ?`,
-        args: [...whereArgs, ...cursorArgs, limit + 1],
+        args: [ledgerId, user.id, user.id, ...whereArgs, ...cursorArgs, limit + 1],
       }),
       db.execute({
         sql: 'SELECT COUNT(*) AS cnt FROM ledger_members WHERE ledger_id = ?',
@@ -227,9 +253,10 @@ export async function POST(request: NextRequest) {
     const normalizedDescription = typeof description === 'string' ? description.trim() : '';
     const normalizedType = type === 'income' || type === 'transfer' ? type : 'expense';
     const isTransfer = normalizedType === 'transfer';
-    const normalizedCategoryId = category_id === null || category_id === undefined || category_id === ''
-      ? null
-      : Number(category_id);
+    const normalizedCategoryId =
+      category_id === null || category_id === undefined || category_id === '' || category_id === 'unclassified'
+        ? null
+        : Number(category_id);
     const clientRequestId = typeof client_request_id === 'string'
       && /^[A-Za-z0-9_-]{8,120}$/.test(client_request_id)
       ? client_request_id
@@ -241,7 +268,7 @@ export async function POST(request: NextRequest) {
       !normalizedDescription ||
       !['income', 'expense', 'transfer'].includes(String(type)) ||
       !isValidDate(finalDate) ||
-      (!isTransfer && (!normalizedCategoryId || !Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0))
+      (!isTransfer && normalizedCategoryId !== null && (!Number.isInteger(normalizedCategoryId) || normalizedCategoryId <= 0))
     ) {
       return NextResponse.json(
         { error: 'Invalid transaction data' },
@@ -260,6 +287,8 @@ export async function POST(request: NextRequest) {
 
     const resolvedAccountId = account_id ? Number(account_id) : defaultAccountId;
     const resolvedToAccountId = isTransfer && to_account_id ? Number(to_account_id) : null;
+
+    let finalCategoryId: number | null = isTransfer ? null : normalizedCategoryId;
 
     if (!Number.isInteger(resolvedAccountId) || resolvedAccountId <= 0) {
       return NextResponse.json({ error: 'Ví nguồn không hợp lệ.' }, { status: 400 });
@@ -284,12 +313,20 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Ví không hợp lệ.' }, { status: 400 });
       }
 
-      const categoryResult = await db.execute({
-        sql: 'SELECT id, name FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
-        args: [normalizedCategoryId!, user.id],
-      });
-      if (!categoryResult.rows[0]) {
-        return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+      if (finalCategoryId !== null) {
+        const categoryResult = await db.execute({
+          sql: 'SELECT id, name FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
+          args: [finalCategoryId, user.id],
+        });
+        if (!categoryResult.rows[0]) {
+          return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
+        }
+      } else if (normalizedType === 'expense') {
+        const fallbackCat = await db.execute({
+          sql: 'SELECT id FROM categories WHERE lower(name) = lower(?) AND (user_id IS NULL OR user_id = ?) LIMIT 1',
+          args: [UNCLASSIFIED_EXPENSE, user.id],
+        });
+        finalCategoryId = fallbackCat.rows[0] ? Number(fallbackCat.rows[0].id) : null;
       }
     }
 
@@ -308,7 +345,7 @@ export async function POST(request: NextRequest) {
         numericAmount,
         normalizedDescription,
         typeof note === 'string' ? note.trim() : '',
-        isTransfer ? null : normalizedCategoryId,
+        finalCategoryId,
         finalDate,
         normalizedType,
         isTransfer ? 'none' : normalizedReimburse,
@@ -323,7 +360,9 @@ export async function POST(request: NextRequest) {
       sql: `
         SELECT e.id, e.amount, e.description, e.note, e.category_id, e.account_id, e.to_account_id,
                e.expense_date, e.type, e.reimburse_status, e.created_at, e.created_by_user_id,
-               c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
+               COALESCE(c.name, '${UNCLASSIFIED_EXPENSE}') AS category_name,
+               COALESCE(c.icon, 'tag') AS category_icon,
+               COALESCE(c.color, '#64748B') AS category_color,
                a1.name AS account_name, a2.name AS to_account_name,
                cu.name AS created_by_name, cu.avatar AS created_by_avatar
         FROM expenses e
@@ -347,12 +386,12 @@ export async function POST(request: NextRequest) {
       ? await syncExpenseTags(db, ledgerId, Number(createdRow.id), tagList)
       : (await getTagsForExpenses(db, [Number(createdRow.id)])).get(Number(createdRow.id)) ?? [];
 
-    const budgetAlert = wasInserted && normalizedType === 'expense' && normalizedCategoryId
+    const budgetAlert = wasInserted && normalizedType === 'expense' && finalCategoryId
       ? await getBudgetAlert({
         db,
         userId: user.id,
         ledgerId,
-        categoryId: normalizedCategoryId,
+        categoryId: finalCategoryId,
         expenseDate: finalDate,
         addedAmount: numericAmount,
       })

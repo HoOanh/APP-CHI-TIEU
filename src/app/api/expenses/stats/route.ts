@@ -4,6 +4,7 @@ import { getDb } from '@/lib/db';
 import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
 import { normalizeTagName } from '@/lib/tags';
+import { UNCLASSIFIED_EXPENSE } from '@/lib/schema';
 import { getCurrentMonth, getVietnamToday } from '@/lib/utils';
 
 type Period = 'daily' | 'monthly' | 'quarterly' | 'yearly';
@@ -103,14 +104,18 @@ export async function GET(request: NextRequest) {
         args: baseArgs,
       }),
       db.execute({
-        sql: `SELECT c.name AS category_name, c.color AS category_color, SUM(e.amount) AS total, COUNT(*) AS count
+        sql: `SELECT COALESCE(co.name, c.name, '${UNCLASSIFIED_EXPENSE}') AS category_name,
+                     COALESCE(co.icon, c.icon, 'tag') AS category_icon,
+                     COALESCE(co.color, c.color, '#64748B') AS category_color,
+                     SUM(e.amount) AS total, COUNT(*) AS count
               FROM expenses e
-              JOIN categories c ON c.id = e.category_id
+              LEFT JOIN categories c ON c.id = e.category_id
+              LEFT JOIN category_overrides co ON co.category_id = c.id AND co.user_id = ?
               WHERE ${scopeSql}
                 AND e.type = 'expense' AND e.expense_date >= ? AND e.expense_date < ?${tagSql}
-              GROUP BY c.id, c.name, c.color
+              GROUP BY COALESCE(c.id, 0), COALESCE(co.name, c.name, '${UNCLASSIFIED_EXPENSE}'), COALESCE(co.icon, c.icon, 'tag'), COALESCE(co.color, c.color, '#64748B')
               ORDER BY total DESC LIMIT 8`,
-        args: baseArgs,
+        args: [user.id, ...baseArgs],
       }),
       db.execute({ sql: dateQuery, args: baseArgs }),
       range.comparisonStart && range.comparisonEnd
@@ -181,6 +186,34 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const today = getVietnamToday();
+    const isCurrentMonthPeriod = period === 'daily' && month === today.slice(0, 7);
+    const elapsedDays = period === 'daily'
+      ? (isCurrentMonthPeriod ? Math.max(1, Number(today.slice(8, 10)) || 1) : days)
+      : days;
+
+    let dailyJarAverage: number | null = null;
+    if (period === 'daily') {
+      const dailyJarRes = await db.execute({
+        sql: `SELECT COUNT(DISTINCT b.id) AS jar_count,
+                     COALESCE(SUM(e.amount), 0) AS jar_spent
+              FROM budget_jars b
+              LEFT JOIN expenses e ON (e.ledger_id = b.ledger_id OR (b.ledger_id IS NULL AND e.user_id = b.user_id))
+                AND e.category_id = b.category_id
+                AND e.type = 'expense'
+                AND e.expense_date >= ? AND e.expense_date < ?
+              WHERE (b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?))
+                AND b.month = ?
+                AND b.budget_basis = 'daily'`,
+        args: [range.start, range.end, ledgerId, user.id, month],
+      });
+      const jarCount = Number(dailyJarRes.rows[0]?.jar_count) || 0;
+      const jarSpent = Number(dailyJarRes.rows[0]?.jar_spent) || 0;
+      if (jarCount > 0) {
+        dailyJarAverage = Math.round(jarSpent / elapsedDays);
+      }
+    }
+
     return NextResponse.json(
       {
         total,
@@ -204,7 +237,8 @@ export async function GET(request: NextRequest) {
           by_tag: byTag,
         },
         count: Number(totalResult.rows[0]?.count) || 0,
-        daily_average: Math.round(total / days),
+        daily_average: dailyJarAverage ?? Math.round(total / elapsedDays),
+        daily_jar_average: dailyJarAverage,
         by_category: categoryResult.rows,
         by_date: byDate,
         previous_total: Number(previousResult?.rows[0]?.total) || 0,

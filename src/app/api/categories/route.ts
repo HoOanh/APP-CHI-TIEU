@@ -19,11 +19,18 @@ export async function GET() {
 
     const db = await getDb();
     const result = await db.execute({
-      sql: `SELECT *, user_id IS NULL as is_system
-            FROM categories
-            WHERE user_id IS NULL OR user_id = ?
-            ORDER BY name ASC`,
-      args: [user.id]
+      sql: `SELECT c.id, c.user_id, c.ledger_id,
+                   COALESCE(co.name, c.name) AS name,
+                   COALESCE(co.icon, c.icon) AS icon,
+                   COALESCE(co.color, c.color) AS color,
+                   COALESCE(co.kind, c.kind) AS kind,
+                   c.budget_group, c.created_at,
+                   c.user_id IS NULL AS is_system
+            FROM categories c
+            LEFT JOIN category_overrides co ON co.category_id = c.id AND co.user_id = ?
+            WHERE c.user_id IS NULL OR c.user_id = ?
+            ORDER BY COALESCE(co.name, c.name) ASC`,
+      args: [user.id, user.id],
     });
     return NextResponse.json(result.rows);
   } catch (error) {
@@ -46,16 +53,17 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedName = parsed.data.name;
-    const normalizedIcon = parsed.data.icon && parsed.data.icon.length > 0 ? parsed.data.icon : 'category';
-    const normalizedColor = parsed.data.color ?? '#64748b';
+    const normalizedIcon = parsed.data.icon && parsed.data.icon.length > 0 ? parsed.data.icon : 'tag';
+    const normalizedColor = parsed.data.color ?? '#00B878';
     const normalizedKind = parsed.data.kind ?? 'expense';
-    
+
     const db = await getDb();
     const existing = await db.execute({
-      sql: `SELECT id FROM categories
-            WHERE (user_id IS NULL OR user_id = ?) AND lower(name) = lower(?)
+      sql: `SELECT c.id FROM categories c
+            LEFT JOIN category_overrides co ON co.category_id = c.id AND co.user_id = ?
+            WHERE (c.user_id IS NULL OR c.user_id = ?) AND lower(COALESCE(co.name, c.name)) = lower(?)
             LIMIT 1`,
-      args: [user.id, normalizedName],
+      args: [user.id, user.id, normalizedName],
     });
     if (existing.rows[0]) {
       return NextResponse.json({ error: 'Tên danh mục đã tồn tại' }, { status: 409 });
@@ -63,14 +71,14 @@ export async function POST(request: NextRequest) {
 
     const result = await db.execute({
       sql: 'INSERT INTO categories (user_id, name, icon, color, kind) VALUES (?, ?, ?, ?, ?)',
-      args: [user.id, normalizedName, normalizedIcon, normalizedColor, normalizedKind]
+      args: [user.id, normalizedName, normalizedIcon, normalizedColor, normalizedKind],
     });
-    
+
     const newCategory = await db.execute({
       sql: 'SELECT *, user_id IS NULL as is_system FROM categories WHERE id = ? AND user_id = ?',
-      args: [result.lastInsertRowid!, user.id]
+      args: [result.lastInsertRowid!, user.id],
     });
-    
+
     return NextResponse.json(newCategory.rows[0], { status: 201 });
   } catch (error) {
     if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {

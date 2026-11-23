@@ -147,10 +147,10 @@ export function RecurringRulesManager() {
         <div>
           <CardTitle className="flex items-center gap-2 text-base">
             <CalendarClock className="size-4 text-[#00a970]" />
-            Lịch nhắc hóa đơn định kỳ (Notify-Only)
+            Lịch nhắc định kỳ
           </CardTitle>
           <CardDescription>
-            Tới kỳ hẹn app chỉ gửi thông báo &amp; hiện thẻ chờ bạn bấm xác nhận, tuyệt đối không tự động trừ ví.
+            Đến hạn chỉ gửi thông báo để bạn tự xác nhận, không tự động trừ ví.
           </CardDescription>
         </div>
         <Button type="button" size="sm" variant="outline" onClick={() => setIsAdding((v) => !v)} className="shrink-0 rounded-xl">

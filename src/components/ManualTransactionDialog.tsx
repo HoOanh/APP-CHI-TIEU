@@ -20,6 +20,7 @@ import { queueOfflineTransaction } from '@/lib/offline-queue';
 interface CategoryOption {
   id: string | number;
   name: string;
+  icon?: string;
   color: string;
   kind?: 'expense' | 'income' | 'both';
 }
@@ -85,7 +86,7 @@ const transactionSchema = z.object({
       context.addIssue({ code: 'custom', path: ['to_account_id'], message: 'Chọn ví đích khác ví nguồn.' });
     }
   } else if (!values.category_id) {
-    context.addIssue({ code: 'custom', path: ['category_id'], message: 'Chọn danh mục.' });
+    // Allow unclassified / unplanned expense by defaulting to 'unclassified'
   }
 });
 
@@ -127,9 +128,12 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       ? (kind === 'income' || kind === 'both' || category.name === 'Thu nhập')
       : (kind === 'expense' || kind === 'both');
   });
+  const hasUnclassifiedOption = type === 'expense' && !availableCategories.some((c) => c.name === 'Chưa phân loại');
   const activeCategoryId = availableCategories.some((category) => String(category.id) === categoryId)
     ? categoryId
-    : String(availableCategories[0]?.id || '');
+    : categoryId === 'unclassified' || hasUnclassifiedOption
+      ? 'unclassified'
+      : String(availableCategories[0]?.id || 'unclassified');
 
   const showTransferTab = accounts.length > 1 || transaction?.type === 'transfer';
   const showAccountPicker = accounts.length > 1 || type === 'transfer';
@@ -168,7 +172,7 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
         const currentCategory = form.getValues('category_id');
         if (!catData.some((category) => String(category.id) === currentCategory)) {
           const firstExpense = catData.find((category) => (category.kind ?? 'expense') !== 'income' && category.name !== 'Thu nhập');
-          form.setValue('category_id', firstExpense ? String(firstExpense.id) : '');
+          form.setValue('category_id', firstExpense ? String(firstExpense.id) : 'unclassified');
         }
 
         if (accResponse.ok) {
@@ -216,10 +220,13 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
       .split(/[\s,;]+/)
       .map((t) => t.replace(/^#+/, '').trim())
       .filter(Boolean);
+    const resolvedCategoryId = values.type === 'transfer' || activeCategoryId === 'unclassified'
+      ? null
+      : activeCategoryId;
     const transactionValues = {
       amount: parseMoneyInput(values.amount),
       description: values.description.trim(),
-      category_id: values.type === 'transfer' ? null : activeCategoryId,
+      category_id: resolvedCategoryId,
       account_id: values.account_id ? Number(values.account_id) : undefined,
       to_account_id: values.type === 'transfer' && values.to_account_id ? Number(values.to_account_id) : undefined,
       expense_date: values.expense_date,
@@ -309,7 +316,20 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
 
   return (
     <>
-      <Button type="button" variant={transaction ? 'ghost' : compact ? 'outline' : 'default'} size={transaction ? 'icon-sm' : 'default'} aria-label={transaction ? `Sửa ${transaction.description}` : 'Nhập thủ công'} className={transaction ? 'size-8 text-slate-400 hover:bg-emerald-50 hover:text-emerald-700' : 'h-9 rounded-xl'} onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        variant={transaction ? 'ghost' : compact ? 'outline' : 'default'}
+        size={transaction ? 'icon-sm' : 'default'}
+        aria-label={transaction ? `Sửa ${transaction.description}` : 'Nhập thủ công'}
+        className={
+          transaction
+            ? 'size-8 text-slate-400 hover:bg-emerald-50 hover:text-emerald-700'
+            : iconOnMobile
+              ? 'size-9 rounded-full border-slate-200 bg-white px-0 sm:h-9 sm:w-auto sm:rounded-xl sm:px-3'
+              : 'h-9 rounded-xl'
+        }
+        onClick={() => setOpen(true)}
+      >
         <PenLine className="size-4" />{transaction ? null : <span className={iconOnMobile ? "hidden sm:inline" : undefined}>Nhập thủ công</span>}
       </Button>
       <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) resetForm(); }}>
@@ -407,16 +427,32 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
                         <SelectValue placeholder="Chọn danh mục">
                           {(() => {
                             const selectedCategory = availableCategories.find((category) => String(category.id) === activeCategoryId);
-                            return selectedCategory ? (
-                              <span className="inline-flex min-w-0 items-center gap-2">
-                                <CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-6 rounded-md" iconClassName="size-3.5" />
-                                <span className="truncate">{selectedCategory.name}</span>
-                              </span>
-                            ) : 'Chọn danh mục';
+                            if (selectedCategory) {
+                              return (
+                                <span className="inline-flex min-w-0 items-center gap-2">
+                                  <CategoryIcon name={selectedCategory.name} icon={selectedCategory.icon} color={selectedCategory.color} className="size-6 rounded-md" iconClassName="size-3.5" />
+                                  <span className="truncate">{selectedCategory.name}</span>
+                                </span>
+                              );
+                            }
+                            if (activeCategoryId === 'unclassified') {
+                              return (
+                                <span className="inline-flex min-w-0 items-center gap-2">
+                                  <CategoryIcon name="Chưa phân loại" color="#64748B" className="size-6 rounded-md" iconClassName="size-3.5" />
+                                  <span className="truncate">Chưa phân loại (Phát sinh)</span>
+                                </span>
+                              );
+                            }
+                            return 'Chọn danh mục';
                           })()}
                         </SelectValue>
                       </SelectTrigger>
-                      <SelectContent>{availableCategories.map((category) => <SelectItem key={category.id} value={String(category.id)}><span className="flex items-center gap-2"><CategoryIcon name={category.name} color={category.color} className="size-7 rounded-lg" iconClassName="size-3.5" />{category.name}</span></SelectItem>)}</SelectContent>
+                      <SelectContent>
+                        {availableCategories.map((category) => <SelectItem key={category.id} value={String(category.id)}><span className="flex items-center gap-2"><CategoryIcon name={category.name} icon={category.icon} color={category.color} className="size-7 rounded-lg" iconClassName="size-3.5" />{category.name === 'Chưa phân loại' ? 'Chưa phân loại (Phát sinh ngoài hũ)' : category.name}</span></SelectItem>)}
+                        {hasUnclassifiedOption ? (
+                          <SelectItem value="unclassified"><span className="flex items-center gap-2"><CategoryIcon name="Chưa phân loại" color="#64748B" className="size-7 rounded-lg" iconClassName="size-3.5" />Chưa phân loại (Phát sinh ngoài hũ)</span></SelectItem>
+                        ) : null}
+                      </SelectContent>
                     </Select>} />
                     <FieldError message={form.formState.errors.category_id?.message} />
                   </div>
@@ -461,7 +497,7 @@ export function ManualTransactionDialog({ onSaved, compact = false, iconOnMobile
             </div>
             <div className="flex gap-2 border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
               <Button type="button" variant="outline" className="h-11 flex-1 rounded-xl" onClick={() => setOpen(false)}>Hủy</Button>
-              <Button type="submit" className="h-11 flex-1 rounded-xl font-semibold" disabled={form.formState.isSubmitting || (type !== 'transfer' && !availableCategories.length)}>
+              <Button type="submit" className="h-11 flex-1 rounded-xl font-semibold" disabled={form.formState.isSubmitting}>
                 {form.formState.isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <CirclePlus className="size-4" />} {transaction ? 'Lưu thay đổi' : 'Lưu giao dịch'}
               </Button>
             </div>

@@ -24,7 +24,8 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const dailyAmount = Number(body.daily_amount) || 0;
     const days = Number(body.budget_days) || 0;
     const amount = basis === 'daily' ? dailyAmount * days : Number(body.budget_amount);
-    const warningPercent = Math.min(100, Math.max(1, Number(body.warning_percent) || 80));
+    const rawWarning = Number(body.warning_percent);
+    const warningPercent = Number.isFinite(rawWarning) && rawWarning > 0 ? Math.min(101, Math.max(1, rawWarning)) : 101;
     const dailyLimit = Math.max(0, Number(body.daily_limit) || 0);
     const frequencyLimit = Math.max(0, Math.trunc(Number(body.frequency_limit) || 0));
     const frequencyPeriod = typeof body.frequency_period === 'string' && VALID_FREQUENCY_PERIODS.has(body.frequency_period)

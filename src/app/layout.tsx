@@ -7,7 +7,6 @@ import { Toaster } from "@/components/ui/toaster";
 import { AppShell } from "@/components/AppShell";
 import { getCurrentUser } from "@/lib/current-user";
 import { PwaServiceWorker } from "@/components/PwaServiceWorker";
-import { appleStartupImages } from "./apple-startup-images";
 
 export const metadata: Metadata = {
   applicationName: "ARC Irobot",
@@ -17,7 +16,6 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: "default",
     title: "ARC Irobot",
-    startupImage: appleStartupImages,
   },
   icons: {
     icon: [

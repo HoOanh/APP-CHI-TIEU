@@ -80,7 +80,7 @@ export function BudgetFormDialog({
                       const selectedCategory = categories.find((category) => String(category.id) === formData.category_id);
                       return selectedCategory ? (
                         <span className="inline-flex min-w-0 items-center gap-2.5">
-                          <CategoryIcon name={selectedCategory.name} color={selectedCategory.color} className="size-7 rounded-lg" iconClassName="size-3.5" />
+                          <CategoryIcon name={selectedCategory.name} icon={selectedCategory.icon} color={selectedCategory.color} className="size-7 rounded-lg" iconClassName="size-3.5" />
                           <span className="truncate font-medium">{selectedCategory.name}</span>
                         </span>
                       ) : 'Chọn danh mục chi tiêu';
@@ -92,7 +92,7 @@ export function BudgetFormDialog({
                     .filter((category) => category.name !== 'Thu nhập')
                     .map((category) => (
                       <SelectItem key={category.id} value={String(category.id)} className="min-h-11 rounded-xl px-2 py-2 text-sm font-medium">
-                        <CategoryIcon name={category.name} color={category.color} className="size-8 rounded-xl" iconClassName="size-4" />
+                        <CategoryIcon name={category.name} icon={category.icon} color={category.color} className="size-8 rounded-xl" iconClassName="size-4" />
                         <span className="truncate pr-5">{category.name}</span>
                       </SelectItem>
                     ))}
@@ -172,25 +172,29 @@ export function BudgetFormDialog({
               </div>
             </div>
 
-            <div className="flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-3 py-2.5">
               <div>
-                <p className="text-sm font-medium">Nhắc khi đã chi</p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">Gửi cảnh báo trước khi vượt hũ</p>
+                <p className="text-sm font-medium">Cảnh báo hạn mức</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Mặc định chỉ báo khi vượt quá 100%</p>
               </div>
               <div role="radiogroup" aria-label="Ngưỡng cảnh báo" className="grid grid-cols-3 rounded-xl bg-amber-50 p-1">
-                {['60', '80', '90'].map((percent) => (
+                {[
+                  { value: '80', label: '80%' },
+                  { value: '100', label: '100%' },
+                  { value: '101', label: 'Vượt 100%' },
+                ].map((option) => (
                   <button
-                    key={percent}
+                    key={option.value}
                     type="button"
                     role="radio"
-                    aria-checked={formData.warning_percent === percent}
-                    onClick={() => setFormData((prev) => ({ ...prev, warning_percent: percent }))}
+                    aria-checked={formData.warning_percent === option.value}
+                    onClick={() => setFormData((prev) => ({ ...prev, warning_percent: option.value }))}
                     className={cn(
-                      'h-8 min-w-10 rounded-lg px-2 text-xs font-semibold transition',
-                      formData.warning_percent === percent ? 'bg-white text-amber-700 shadow-sm' : 'text-amber-700/65 hover:text-amber-700',
+                      'h-8 min-w-12 rounded-lg px-2 text-xs font-semibold transition',
+                      formData.warning_percent === option.value ? 'bg-white text-amber-700 shadow-sm' : 'text-amber-700/65 hover:text-amber-700',
                     )}
                   >
-                    {percent}%
+                    {option.label}
                   </button>
                 ))}
               </div>

@@ -147,7 +147,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   if (
     !isGoogleAuthConfigured()
     && process.env.NODE_ENV !== 'production'
-    && process.env.ALLOW_LOCAL_DEV_BYPASS !== 'false'
+    && process.env.ALLOW_LOCAL_DEV_BYPASS === 'true'
   ) {
     return getCachedDevelopmentUser();
   }

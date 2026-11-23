@@ -54,6 +54,28 @@ export interface FastPathTransferMatch {
   toAccountName: string;
 }
 
+export function resolveExplicitImageContextCategory<T extends { id: string; name: string }>(
+  message: string,
+  expenseCategories: T[],
+  unclassifiedName = 'Chưa phân loại',
+): T | null {
+  const normalizedMessage = message.normalize('NFC').toLocaleLowerCase('vi').trim();
+  if (!normalizedMessage) return null;
+  if (/(?:tách riêng|riêng từng|giao dịch\s*\d|ảnh\s*\d|khoản\s*\d|mỗi ảnh)/iu.test(normalizedMessage)) {
+    return null;
+  }
+
+  const matched = expenseCategories.filter((cat) => {
+    const name = cat.name.normalize('NFC').toLocaleLowerCase('vi').trim();
+    if (!name || name === unclassifiedName.toLocaleLowerCase('vi')) return false;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu');
+    return pattern.test(normalizedMessage);
+  });
+
+  return matched.length === 1 ? matched[0] : null;
+}
+
 export function normalizeMerchantKeyword(value: string): string {
   return value
     .normalize('NFC')

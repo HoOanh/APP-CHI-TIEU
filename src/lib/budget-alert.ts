@@ -52,7 +52,9 @@ export async function getBudgetAlert({
   const daySpent = Number(budget.day_spent) || 0;
   const spentBeforeThisTransaction = Math.max(0, spent - addedAmount);
   const daySpentBefore = Math.max(0, daySpent - addedAmount);
-  const warningPercent = Number(budget.warning_percent) || 80;
+  const rawWarning = Number(budget.warning_percent);
+  const warningPercent = Number.isFinite(rawWarning) && rawWarning > 0 ? rawWarning : 101;
+  const onlyAlertOnOverspend = warningPercent > 100;
   const effectiveDailyLimit = Number(budget.daily_limit) > 0
     ? Number(budget.daily_limit)
     : budget.budget_basis === 'daily'
@@ -79,8 +81,8 @@ export async function getBudgetAlert({
     };
   }
 
-  // 3. Exact 100% monthly limit reached
-  if (limit > 0 && spent >= limit && spentBeforeThisTransaction < limit) {
+  // 3. Exact 100% monthly limit reached (skip when user opted for >100% overspend-only alerts)
+  if (!onlyAlertOnOverspend && limit > 0 && spent >= limit && spentBeforeThisTransaction < limit) {
     return {
       title: `🚨 CHẠM KỊCH TRẦN THÁNG — ${categoryName}`,
       message: `Đã chi đủ 100% ngân sách tháng (${formatAmount(spent)}/${formatAmount(limit)}). Mọi khoản chi thêm sẽ bị lố ngân sách!`,
@@ -90,7 +92,9 @@ export async function getBudgetAlert({
 
   // 4. Approaching monthly warning threshold
   if (
-    limit > 0
+    !onlyAlertOnOverspend
+    && warningPercent < 100
+    && limit > 0
     && spent >= (limit * warningPercent) / 100
     && spentBeforeThisTransaction < (limit * warningPercent) / 100
   ) {
@@ -101,11 +105,14 @@ export async function getBudgetAlert({
     };
   }
 
-  // 5. Approaching or hitting exact daily limit
+  // 5. Approaching or hitting exact daily limit (only when early warning is enabled)
   if (
-    effectiveDailyLimit > 0
-    && daySpent >= effectiveDailyLimit * 0.85
-    && daySpentBefore < effectiveDailyLimit * 0.85
+    !onlyAlertOnOverspend
+    && effectiveDailyLimit > 0
+    && (
+      (daySpent >= effectiveDailyLimit && daySpentBefore < effectiveDailyLimit)
+      || (warningPercent < 100 && daySpent >= effectiveDailyLimit * (warningPercent / 100) && daySpentBefore < effectiveDailyLimit * (warningPercent / 100))
+    )
   ) {
     const remainingDay = Math.max(0, effectiveDailyLimit - daySpent);
     return {

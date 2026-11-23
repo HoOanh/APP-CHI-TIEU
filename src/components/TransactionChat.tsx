@@ -115,6 +115,8 @@ interface SavedTransaction {
   note: string | null;
   expense_date: string;
   type: 'income' | 'expense' | 'transfer';
+  in_budget_jar?: boolean;
+  is_unplanned?: boolean;
 }
 
 interface ChatResponse {
@@ -459,26 +461,70 @@ export function TransactionChat({
 
   return (
     <div className={cn("flex w-full flex-col overflow-hidden bg-[#f7f9fb]", embedded ? (messages.length || listening ? "h-[min(560px,calc(100dvh-2rem))]" : "max-h-[calc(100dvh-2rem)]") : "h-dvh")}>
-      <header className={cn("flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 md:px-6", embedded && "pr-12 md:pr-12")}>
-        <div className="flex min-w-0 items-center">
-        {!embedded && <Link href="/" aria-label="Quay lại" className="mr-3 flex size-9 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100">
-          <ArrowLeft className="size-5" />
-        </Link>}
-        <div>
-          <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-slate-800">
-            {mode === 'debt' ? 'Trả & Thu nợ AI' : 'Ghi & Hỏi đáp AI'}
-          </h1>
-          <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">Ghi thu chi, trả nợ, chuyển ví hoặc hỏi số liệu trực tiếp</p>
+      <header className="shrink-0 border-b border-slate-200 bg-white">
+        <div className={cn("flex h-14 items-center justify-between gap-2 px-3 sm:h-16 md:px-6", embedded && "pr-12 md:pr-12")}>
+          <div className="flex min-w-0 items-center">
+            {!embedded && (
+              <Link href="/" aria-label="Quay lại" className="mr-2 flex size-9 shrink-0 items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 sm:mr-3">
+                <ArrowLeft className="size-5" />
+              </Link>
+            )}
+            <div className="min-w-0">
+              <h1 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-slate-800">
+                {mode === 'debt' ? 'Trả & Thu nợ AI' : 'Ghi & Hỏi đáp AI'}
+              </h1>
+              <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">Ghi thu chi, trả nợ, chuyển ví hoặc hỏi số liệu trực tiếp</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <div className="hidden items-center rounded-xl border border-slate-200 bg-slate-50 p-0.5 text-xs sm:flex">
+              <button
+                type="button"
+                onClick={() => setMode('auto')}
+                className={cn(
+                  'rounded-lg px-2.5 py-1 font-medium transition',
+                  mode === 'auto' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-700',
+                )}
+              >
+                Tự động
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('debt')}
+                className={cn(
+                  'flex items-center gap-1 rounded-lg px-2.5 py-1 font-medium transition',
+                  mode === 'debt' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-500 hover:text-slate-700',
+                )}
+              >
+                <Landmark className="size-3" /> Công nợ
+              </button>
+            </div>
+            {accounts.length > 1 ? (
+              <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                <SelectTrigger aria-label="Chọn ví khi chat" className="hidden h-9 w-36 rounded-xl bg-white text-xs sm:flex">
+                  <Wallet className="mr-1 size-3.5 text-slate-500" />
+                  <SelectValue placeholder="Ví" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((acc) => (
+                    <SelectItem key={acc.id} value={String(acc.id)}>{acc.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            <QuickEntryAccess onChatPage={!embedded} iconOnMobile />
+            <ManualTransactionDialog compact iconOnMobile onSaved={refreshData} />
+          </div>
         </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-          <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-0.5 text-xs">
+
+        <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-3 py-2 sm:hidden">
+          <div className="grid grid-cols-2 rounded-xl border border-slate-200 bg-slate-50 p-0.5 text-xs">
             <button
               type="button"
               onClick={() => setMode('auto')}
               className={cn(
-                'rounded-lg px-2.5 py-1 font-medium transition',
-                mode === 'auto' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-700',
+                'rounded-lg px-3 py-1 font-medium transition',
+                mode === 'auto' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500',
               )}
             >
               Tự động
@@ -487,8 +533,8 @@ export function TransactionChat({
               type="button"
               onClick={() => setMode('debt')}
               className={cn(
-                'flex items-center gap-1 rounded-lg px-2.5 py-1 font-medium transition',
-                mode === 'debt' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-500 hover:text-slate-700',
+                'flex items-center justify-center gap-1 rounded-lg px-3 py-1 font-medium transition',
+                mode === 'debt' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-500',
               )}
             >
               <Landmark className="size-3" /> Công nợ
@@ -496,9 +542,9 @@ export function TransactionChat({
           </div>
           {accounts.length > 1 ? (
             <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-              <SelectTrigger aria-label="Chọn ví khi chat" className="hidden h-8 w-36 rounded-xl bg-white text-xs sm:flex">
-                <Wallet className="mr-1 size-3.5 text-slate-500" />
-                <SelectValue placeholder="Ví" />
+              <SelectTrigger aria-label="Chọn ví khi chat trên mobile" className="h-8 w-36 rounded-xl bg-white text-xs">
+                <Wallet className="mr-1 size-3.5 shrink-0 text-slate-500" />
+                <SelectValue placeholder="Chọn ví" />
               </SelectTrigger>
               <SelectContent>
                 {accounts.map((acc) => (
@@ -507,8 +553,6 @@ export function TransactionChat({
               </SelectContent>
             </Select>
           ) : null}
-          <QuickEntryAccess onChatPage={!embedded} />
-          <ManualTransactionDialog compact iconOnMobile onSaved={refreshData} />
         </div>
       </header>
 
@@ -717,7 +761,7 @@ function MessageBubble({ message, onRetry, onEditSubmission, onSaved }: {
         {message.images?.length ? <div className="mb-2 grid grid-cols-2 gap-1.5">{message.images.map((image, index) => <Image key={image} src={image} alt={`Ảnh giao dịch ${index + 1}`} width={240} height={160} unoptimized className="h-28 w-full rounded-xl object-cover" />)}</div> : null}
         {!isUser && message.fastPath ? (
           <div className="mb-1.5 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 border border-amber-200">
-            <Zap className="size-3 text-amber-500" /> Fast-Path 0ms
+            <Zap className="size-3 text-amber-500" /> Lưu tức thì
           </div>
         ) : null}
         {message.content ? <p className="whitespace-pre-wrap">{message.content}</p> : null}
@@ -876,12 +920,19 @@ function TransactionCard({ transaction, onSaved }: {
         }} />
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-        <span>
-          {isTransfer
-            ? `${transaction.account_name || 'Ví nguồn'} → ${transaction.to_account_name || 'Ví đích'}`
-            : `${transaction.category_name || 'Khác'}${transaction.account_name ? ` (${transaction.account_name})` : ''}`}
-          {' · '}
-          {formatShortDate(transaction.expense_date)}
+        <span className="flex flex-wrap items-center gap-1.5">
+          <span>
+            {isTransfer
+              ? `${transaction.account_name || 'Ví nguồn'} → ${transaction.to_account_name || 'Ví đích'}`
+              : `${transaction.category_name || 'Chưa phân loại'}${transaction.account_name ? ` (${transaction.account_name})` : ''}`}
+            {' · '}
+            {formatShortDate(transaction.expense_date)}
+          </span>
+          {!isTransfer && !isIncome && (transaction.is_unplanned || transaction.category_name === 'Chưa phân loại') ? (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+              Phát sinh ngoài hũ
+            </span>
+          ) : null}
         </span>
         {!isTransfer && transaction.category_id ? (
           <button

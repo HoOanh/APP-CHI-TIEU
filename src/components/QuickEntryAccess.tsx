@@ -10,12 +10,13 @@ const appleShortcutLink = shareUrl && /^https:\/\/www\.icloud\.com\/shortcuts\/[
   ? shareUrl
   : undefined;
 
-export function QuickEntryAccess({ onChatPage = false }: { onChatPage?: boolean }) {
+export function QuickEntryAccess({ onChatPage = false, iconOnMobile = false }: { onChatPage?: boolean; iconOnMobile?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button type="button" variant="outline" size="sm" aria-label="Thêm lối tắt Ghi nhanh" className="h-9 gap-1.5 rounded-xl border-emerald-200 bg-emerald-50 px-2 text-emerald-900 hover:bg-emerald-100 sm:px-3">
-          <PlusSquare className="size-4" aria-hidden /> Lối tắt
+        <Button type="button" variant="outline" size={iconOnMobile ? 'icon' : 'sm'} aria-label="Thêm lối tắt Ghi nhanh" className={iconOnMobile ? 'size-9 gap-1.5 rounded-full border-slate-200 bg-white text-slate-700 shadow-2xs hover:bg-slate-50 sm:h-9 sm:w-auto sm:rounded-xl sm:px-3' : 'h-9 gap-1.5 rounded-xl border-slate-200 bg-white px-2.5 text-slate-700 shadow-2xs hover:bg-slate-50 sm:px-3'}>
+          <PlusSquare className="size-4" aria-hidden />
+          <span className={iconOnMobile ? 'hidden sm:inline' : undefined}>Lối tắt</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-md gap-4 pr-5">
@@ -46,8 +47,8 @@ export function QuickEntryAccess({ onChatPage = false }: { onChatPage?: boolean 
             Thêm vào Phím tắt Apple <ArrowUpRight className="size-4" aria-hidden />
           </a>
         )}
-        <Link href="/settings#shortcuts" className={buttonVariants({ variant: 'outline', className: 'w-full justify-between' })}>
-          <span className="flex items-center gap-2"><KeyRound className="size-4 text-emerald-700" aria-hidden /> Tạo Token Apple Shortcuts API</span>
+        <Link href="/settings/automation#shortcuts" className={buttonVariants({ variant: 'outline', className: 'w-full justify-between' })}>
+          <span className="flex items-center gap-2"><KeyRound className="size-4 text-slate-600" aria-hidden /> Tạo mã kết nối Phím tắt iPhone</span>
           <ArrowUpRight className="size-4" aria-hidden />
         </Link>
       </DialogContent>

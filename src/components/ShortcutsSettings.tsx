@@ -105,10 +105,10 @@ export function ShortcutsSettings() {
         throw new Error(data.error || 'Không tạo được API key');
       }
       setCreatedKey({ id: data.id, token: data.token });
-      showToast('Đã tạo Apple Shortcuts Token', 'success');
+      showToast('Đã tạo mã kết nối phím tắt', 'success');
       await loadData();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Lỗi tạo key', 'error');
+      showToast(error instanceof Error ? error.message : 'Không thể tạo mã kết nối', 'error');
     } finally {
       setIsCreating(false);
     }
@@ -117,11 +117,11 @@ export function ShortcutsSettings() {
   async function handleRevokeKey(id: number) {
     const response = await fetch(`/api/shortcuts/keys/${id}`, { method: 'DELETE' });
     if (response.ok) {
-      showToast('Đã thu hồi token', 'success');
+      showToast('Đã ngắt kết nối phím tắt', 'success');
       setKeys((current) => current.filter((item) => item.id !== id));
       setCreatedKey((current) => current?.id === id ? null : current);
     } else {
-      showToast('Không thể thu hồi token', 'error');
+      showToast('Không thể ngắt kết nối', 'error');
     }
   }
 
@@ -129,7 +129,7 @@ export function ShortcutsSettings() {
     const response = await fetch(`/api/merchant-rules?id=${id}`, { method: 'DELETE' });
     if (response.ok) {
       setRules((current) => current.filter((item) => item.id !== id));
-      showToast('Đã xóa quy tắc Fast-Path', 'success');
+      showToast('Đã xóa quy tắc phân loại', 'success');
     }
   }
 
@@ -181,13 +181,13 @@ export function ShortcutsSettings() {
               </Select>
             </div>
             <Button type="submit" disabled={isCreating} className="h-10 rounded-xl">
-              <Plus className="size-4" /> Tạo Token
+              <Plus className="size-4" /> Tạo mã kết nối
             </Button>
           </form>
 
           {createdKey ? (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs">
-              <p className="font-semibold text-emerald-900">Sao chép token mới trước khi rời trang. Token chỉ hiện một lần.</p>
+              <p className="font-semibold text-emerald-900">Hãy sao chép mã kết nối này ngay, mã chỉ hiện một lần.</p>
               <div className="mt-2 flex items-center gap-2">
                 <code className="flex-1 select-all break-all rounded-lg bg-white px-2.5 py-2 font-mono text-[11px] text-slate-800 border border-emerald-200">
                   {createdKey.token}
@@ -201,40 +201,39 @@ export function ShortcutsSettings() {
 
           <section aria-labelledby="shortcut-setup-title" className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-sm">
             <h3 id="shortcut-setup-title" className="font-semibold text-slate-900">Cài trên iPhone</h3>
-            <p>Tạo token ở trên, rồi mở trang này bằng Safari trên iPhone để sao chép URL và cài Phím tắt. Nếu đã có token, dùng lại token đã lưu.</p>
+            <p className="text-xs leading-relaxed text-slate-600">Tạo mã ở trên rồi mở trang này bằng Safari trên iPhone để sao chép đường dẫn và cài Phím tắt.</p>
             {isLoopback ? (
-              <p className="rounded-lg bg-white p-2.5 text-slate-700">
-                Đang mở bằng <code>localhost</code>. Cho iPhone và máy chạy app vào cùng Wi-Fi, giữ server chạy và mở địa chỉ <strong>Network</strong> in trong terminal khi chạy <code>pnpm run dev</code>.
+              <p className="rounded-lg bg-white p-2.5 text-xs text-slate-600">
+                Đang chạy ở máy cá nhân. Hãy mở từ tên miền chính thức trên iPhone để sao chép đường dẫn kết nối.
               </p>
             ) : endpointUrl ? (
               <div className="flex flex-wrap items-center gap-2">
                 <code className="min-w-0 flex-1 select-all break-all text-xs">{endpointUrl}</code>
                 <Button type="button" size="sm" variant="outline" onClick={() => void copyText(endpointUrl)}>
-                  <Copy className="size-3.5" /> Sao chép URL
+                  <Copy className="size-3.5" /> Sao chép đường dẫn
                 </Button>
               </div>
             ) : null}
             {shortcutInstallUrl ? (
-              <p>Mở mẫu iCloud, bấm <strong>Thêm phím tắt</strong> rồi điền URL và token khi được hỏi.</p>
+              <p className="text-xs text-slate-600">Mở mẫu iCloud, bấm <strong>Thêm phím tắt</strong> rồi dán đường dẫn và mã kết nối.</p>
             ) : null}
             <a
               href={shortcutInstallUrl ?? 'shortcuts://create-shortcut'}
-              className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-900 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2"
+              className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-900 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2"
             >
-              <ExternalLink className="size-4" aria-hidden />
-              {shortcutInstallUrl ? 'Cài phím tắt trên iPhone' : 'Mở trình tạo Phím tắt'}
+              <ExternalLink className="size-3.5" aria-hidden />
+              {shortcutInstallUrl ? 'Cài phím tắt trên iPhone' : 'Mở ứng dụng Phím tắt'}
             </a>
-            <details open={shortcutInstallUrl ? undefined : true} className="space-y-2">
-              <summary className="cursor-pointer font-medium">Tạo phím tắt thủ công</summary>
+            <details className="space-y-2 text-xs text-slate-600">
+              <summary className="cursor-pointer font-medium text-slate-800">Xem hướng dẫn cài thủ công</summary>
               <ol className="list-decimal space-y-2 pl-5">
-                <li>Trong trình tạo, đặt tên <strong>Ghi chi tiêu</strong> và thêm <strong>Đọc chính tả văn bản</strong> hoặc <strong>Hỏi đầu vào</strong> kiểu văn bản. Nếu mở ứng dụng Phím tắt thủ công, bấm <strong>+</strong> trước.</li>
-                <li>Thêm <strong>Lấy nội dung của URL</strong> (Get Contents of URL), dán URL ở trên, mở tùy chọn và chọn phương thức <code>POST</code>.</li>
-                <li>Trong <strong>Headers</strong>, thêm <code>Authorization</code> với giá trị <code>Bearer &lt;token&gt;</code>. Thay <code>&lt;token&gt;</code> bằng token đã sao chép, giữ dấu cách sau <code>Bearer</code>.</li>
-                <li>Trong <strong>Request Body</strong>, chọn <strong>JSON</strong>. Thêm trường văn bản <code>text</code> và dùng kết quả tác vụ đầu tiên làm giá trị.</li>
+                <li>Đặt tên phím tắt <strong>Ghi chi tiêu</strong> và thêm hành động <strong>Đọc chính tả văn bản</strong> hoặc <strong>Hỏi đầu vào</strong>.</li>
+                <li>Thêm hành động <strong>Lấy nội dung của URL</strong>, dán đường dẫn ở trên và chọn phương thức <code>POST</code>.</li>
+                <li>Trong phần <strong>Tiêu đề (Headers)</strong>, thêm <code>Authorization</code> với giá trị <code>Bearer &lt;mã kết nối&gt;</code>.</li>
+                <li>Trong phần <strong>Nội dung yêu cầu</strong>, chọn <strong>JSON</strong>, thêm trường văn bản <code>text</code> và gán giá trị là nội dung vừa nhập/nói.</li>
               </ol>
+              <p>Gán vào nút Tác vụ: <strong>Cài đặt → Nút tác vụ → Phím tắt → Ghi chi tiêu</strong>.</p>
             </details>
-            <p>Chạy thử với “cà phê 35k”, chọn <strong>Cho phép</strong> khi iPhone hỏi quyền đọc chính tả hoặc kết nối tới app, rồi kiểm tra giao dịch.</p>
-            <p><strong>Gán nút Tác vụ</strong> · Vào <strong>Cài đặt → Nút tác vụ → Phím tắt → Ghi chi tiêu</strong>. Để dùng Siri, nói “Chạy Ghi chi tiêu”.</p>
           </section>
 
           {keys.length > 0 ? (
@@ -255,15 +254,15 @@ export function ShortcutsSettings() {
                     variant="ghost"
                     onClick={() => void handleRevokeKey(item.id)}
                     className="shrink-0 text-rose-600 hover:bg-rose-50 hover:text-rose-700"
-                    aria-label={`Thu hồi ${item.name}`}
+                    aria-label={`Ngắt kết nối ${item.name}`}
                   >
-                    <Trash2 className="size-4" /> Thu hồi
+                    <Trash2 className="size-4" /> Xóa
                   </Button>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-xs text-slate-500">Chưa có token Apple Shortcuts nào đang hoạt động.</p>
+            <p className="text-xs text-slate-500">Chưa có mã kết nối phím tắt nào.</p>
           )}
         </CardContent>
       </Card>
@@ -272,10 +271,10 @@ export function ShortcutsSettings() {
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <Zap className="size-4 text-amber-500" />
-            Quy tắc Fast-Path đã học ({rules.length})
+            Quy tắc tự phân loại ({rules.length})
           </CardTitle>
           <CardDescription>
-            Khi bạn bấm &quot;Luôn phân loại thế này&quot; trong Chat, lần sau từ khóa tương tự sẽ lưu thẳng trong &lt; 150ms không cần chờ AI.
+            Khi bạn bấm &quot;Luôn phân loại thế này&quot; trong Chat, lần sau từ khóa tương tự sẽ được ghi nhận ngay lập tức.
           </CardDescription>
         </CardHeader>
         <CardContent>

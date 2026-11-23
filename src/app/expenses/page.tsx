@@ -1,19 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { MonthPicker } from '@/components/MonthPicker';
 import { CategoryIcon } from '@/components/CategoryIcon';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ArrowRightLeft, Hash, LoaderCircle, ReceiptText, Search, Trash2, Wallet } from 'lucide-react';
+import { ArrowRightLeft, Download, Hash, LoaderCircle, Plus, ReceiptText, Search, Trash2, Wallet } from 'lucide-react';
 import { cn, formatCurrency, formatShortDate, getCurrentMonth } from '@/lib/utils';
 import { useToast } from '@/hooks/useToast';
 import { ManualTransactionDialog } from '@/components/ManualTransactionDialog';
 import { Input } from '@/components/ui/input';
 import { onTransactionsChanged } from '@/lib/transaction-events';
 
-interface Category { id: string; name: string; color: string; }
+interface Category { id: string; name: string; icon?: string; color: string; }
 interface AccountOption { id: number; name: string; }
 interface TagItem { id: number; name: string; color: string; }
 interface Expense {
@@ -31,6 +32,7 @@ interface Expense {
   reimburse_status: 'none' | 'pending' | 'settled';
   tags: TagItem[];
   type: 'income' | 'expense' | 'transfer';
+  in_budget_jar?: boolean;
 }
 
 interface LedgerBadgeInfo {
@@ -70,10 +72,12 @@ function mapExpenseRow(item: Record<string, unknown>): Expense {
     created_by_name: item.created_by_name ? String(item.created_by_name) : null,
     reimburse_status,
     tags,
+    in_budget_jar: item.in_budget_jar === undefined ? undefined : Number(item.in_budget_jar) === 1,
     category: {
       id: String(item.category_id || ''),
-      name: String(item.category_name || 'Khác'),
-      color: String(item.category_color || '#8493a3'),
+      name: String(item.category_name || 'Chưa phân loại'),
+      icon: item.category_icon ? String(item.category_icon) : undefined,
+      color: String(item.category_color || '#64748B'),
     },
   };
 }
@@ -103,6 +107,10 @@ export default function ExpensesPage() {
   const [availableTags, setAvailableTags] = useState<TagItem[]>([]);
   const [activeTag, setActiveTag] = useState('all');
   const [activeReimburse, setActiveReimburse] = useState<'all' | 'pending' | 'settled'>('all');
+  const [onlyUnplanned, setOnlyUnplanned] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('unplanned') === '1';
+  });
   const [totalAmount, setTotalAmount] = useState(0);
   const [totalIncome, setTotalIncome] = useState(0);
   const [totalExpense, setTotalExpense] = useState(0);
@@ -120,10 +128,11 @@ export default function ExpensesPage() {
     if (activeAccountId !== 'all') params.set('account_id', activeAccountId);
     if (activeTag !== 'all') params.set('tag', activeTag);
     if (activeReimburse !== 'all') params.set('reimburse_status', activeReimburse);
+    if (onlyUnplanned) params.set('unplanned', '1');
     if (activeSearch) params.set('search', activeSearch);
     if (cursor) params.set('cursor', cursor);
     return params;
-  }, [activeAccountId, activeCategoryId, activeReimburse, activeSearch, activeTag, activeType, month]);
+  }, [activeAccountId, activeCategoryId, activeReimburse, activeSearch, activeTag, activeType, month, onlyUnplanned]);
 
   const refreshTags = useCallback(async () => {
     const res = await fetch('/api/tags').catch(() => null);
@@ -296,31 +305,51 @@ export default function ExpensesPage() {
 
   return (
     <div className="mx-auto min-h-screen w-full max-w-7xl bg-[#f7f9fb] pb-nav">
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-[#f7f9fb]/95 px-4 pb-3 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
+      <header className="sticky top-0 z-20 border-b border-slate-200/90 bg-[#f7f9fb]/95 px-4 pb-3.5 pt-4 backdrop-blur-xl md:px-8 md:pb-5 md:pt-6">
         <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Dòng tiền</p>
-            <h1 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Chi tiêu & thu nhập</h1>
+          <div className="min-w-0">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#00a970]">
+              <span className="size-1.5 rounded-full bg-[#00bc7c]" />
+              Dòng tiền{ledgerInfo?.name ? ` · ${ledgerInfo.name}` : ''}
+            </span>
+            <h1 className="mt-0.5 truncate text-xl font-bold tracking-[-0.03em] text-slate-900 md:text-2xl">
+              Chi tiêu &amp; thu nhập
+            </h1>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <MonthPicker month={month} onChange={setMonth} />
+          <div className="flex shrink-0 items-center gap-2">
+            <MonthPicker month={month} onChange={setMonth} className="hidden md:inline-flex" />
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="h-9 rounded-xl border-slate-200 bg-white text-xs"
+              aria-label="Xuất CSV"
+              className="size-9 rounded-full border-slate-200 bg-white px-0 text-xs text-slate-600 shadow-2xs hover:bg-slate-50 sm:h-9 sm:w-auto sm:rounded-xl sm:px-3"
               onClick={() => window.open(`/api/export?format=csv&month=${month}`, '_blank')}
             >
-              Xuất CSV
+              <Download className="size-4" />
+              <span className="hidden sm:inline">Xuất CSV</span>
             </Button>
             {isViewer ? (
               <span className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800">
                 Chỉ xem
               </span>
             ) : (
-              <ManualTransactionDialog compact onSaved={() => { void fetchExpenses(); void refreshTags(); }} />
+              <ManualTransactionDialog compact iconOnMobile onSaved={() => { void fetchExpenses(); void refreshTags(); }} />
             )}
           </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-2 md:hidden">
+          <MonthPicker month={month} onChange={setMonth} className="h-9 rounded-xl bg-white" />
+          {!isViewer ? (
+            <Link
+              href="/chat"
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-[#00b878] px-3.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#00a36c]"
+            >
+              <Plus className="size-3.5" />
+              Ghi nhanh
+            </Link>
+          ) : null}
         </div>
 
         <section className="mt-3 rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 md:mt-4 md:grid md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)] md:items-center md:gap-8 md:px-6 md:py-5">
@@ -391,6 +420,12 @@ export default function ExpensesPage() {
               color="#f59e0b"
               onClick={() => setActiveReimburse((curr) => curr === 'pending' ? 'all' : 'pending')}
             />
+            <FilterChip
+              active={onlyUnplanned}
+              label="Phát sinh ngoài hũ"
+              color="#64748b"
+              onClick={() => setOnlyUnplanned((curr) => !curr)}
+            />
             <span className="my-1 w-px shrink-0 bg-slate-200" />
             <FilterChip active={activeCategoryId === 'all'} label="Mọi danh mục" onClick={() => setActiveCategoryId('all')} />
             {categories.map((category) => (
@@ -404,7 +439,7 @@ export default function ExpensesPage() {
       <main className="space-y-5 px-4 py-5 md:px-8 md:py-7">
         {isLoading ? <div className="space-y-3">{[1, 2, 3].map((item) => <div key={item} className="h-16 animate-pulse rounded-xl bg-slate-200/70" />)}</div> : null}
         {!isLoading && loadError ? <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-white p-4"><p className="text-sm text-rose-800">Không tải được danh sách giao dịch.</p><Button variant="outline" onClick={() => void fetchExpenses()}>Thử lại</Button></div> : null}
-        {!isLoading && !loadError && dates.length === 0 ? (activeSearch || activeType !== 'all' || activeAccountId !== 'all' || activeTag !== 'all' || activeReimburse !== 'all' ? <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Không tìm thấy giao dịch phù hợp bộ lọc.</p> : <EmptyTransactions />) : null}
+        {!isLoading && !loadError && dates.length === 0 ? (activeSearch || activeType !== 'all' || activeAccountId !== 'all' || activeTag !== 'all' || activeReimburse !== 'all' || onlyUnplanned ? <p className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600">Không tìm thấy giao dịch phù hợp bộ lọc.</p> : <EmptyTransactions />) : null}
         {!isLoading && !loadError && dates.length > 0 ? <>
           <div className="space-y-5 xl:hidden">{dates.map((date) => <TransactionGroup key={date} date={date} group={groups[date]} isViewer={isViewer} showCreatorBadge={showCreatorBadge} onDelete={setPendingDeleteId} onToggleReimburse={(exp) => void toggleReimburseStatus(exp)} onSaved={() => { void fetchExpenses(); void refreshTags(); }} />)}</div>
           <section className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white xl:block">
@@ -443,7 +478,7 @@ export default function ExpensesPage() {
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-2">
-                              <CategoryIcon name={expense.category.name} color={expense.category.color} className="size-8 rounded-lg" iconClassName="size-3.5" />
+                              <CategoryIcon name={expense.category.name} icon={expense.category.icon} color={expense.category.color} className="size-8 rounded-lg" iconClassName="size-3.5" />
                               <div>
                                 <span className="block text-slate-700">{expense.category.name}</span>
                                 {expense.account_name ? <span className="block text-[11px] text-slate-400">{expense.account_name}</span> : null}
@@ -454,6 +489,11 @@ export default function ExpensesPage() {
                         <td className="max-w-[22rem] px-4 py-3.5">
                           <span className="block truncate font-medium text-slate-800">{expense.description}</span>
                           <div className="mt-1 flex flex-wrap items-center gap-1">
+                            {expense.type === 'expense' && expense.in_budget_jar === false ? (
+                              <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                                Phát sinh ngoài hũ
+                              </span>
+                            ) : null}
                             {showCreatorBadge && expense.created_by_name ? (
                               <span className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
                                 Bởi {expense.created_by_name}
@@ -589,7 +629,7 @@ function TransactionRow({
         <ArrowRightLeft className="size-4" />
       </span>
     ) : (
-      <CategoryIcon name={expense.category.name} color={expense.category.color} className="size-9 rounded-xl" iconClassName="size-4" />
+      <CategoryIcon name={expense.category.name} icon={expense.category.icon} color={expense.category.color} className="size-9 rounded-xl" iconClassName="size-4" />
     )}
     <div className="min-w-0 flex-1">
       <p className="truncate text-sm font-medium text-slate-700">{expense.description}</p>
@@ -599,8 +639,13 @@ function TransactionRow({
           : expense.note || [expense.category.name, expense.account_name].filter(Boolean).join(' · ')}
         {showCreatorBadge && expense.created_by_name ? ` · Bởi ${expense.created_by_name}` : ''}
       </p>
-      {expense.tags.length > 0 || expense.reimburse_status !== 'none' ? (
+      {expense.tags.length > 0 || expense.reimburse_status !== 'none' || (expense.type === 'expense' && expense.in_budget_jar === false) ? (
         <div className="mt-1 flex flex-wrap items-center gap-1">
+          {expense.type === 'expense' && expense.in_budget_jar === false ? (
+            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+              Ngoài hũ
+            </span>
+          ) : null}
           {expense.tags.map((tag) => (
             <span key={tag.id || tag.name} className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
               #{tag.name}

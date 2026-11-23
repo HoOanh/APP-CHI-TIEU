@@ -11,6 +11,7 @@ import {
   normalizeMerchantKeyword,
   parseFastPathTransaction,
   parseFastPathTransfer,
+  resolveExplicitImageContextCategory,
   type FastPathAccount,
   type FastPathMerchantRule,
 } from './fast-path-parser';
@@ -298,7 +299,8 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       }
     }
 
-    // 5. Load categories, budget jars, merchant_rules & recent history
+    // 5. Load categories, budget jars (active ledger & current month), merchant_rules & recent history
+    const currentMonth = today.slice(0, 7);
     const [categoriesResult, budgetCategoriesResult, rulesResult, historyResult] = await db.batch([
       {
         sql: 'SELECT id, name, color, kind FROM categories WHERE user_id IS NULL OR user_id = ?',
@@ -308,9 +310,11 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
         sql: `SELECT DISTINCT c.id, c.name, c.color
               FROM budget_jars b
               JOIN categories c ON c.id = b.category_id
-              WHERE b.user_id = ? AND (c.user_id IS NULL OR c.user_id = b.user_id)
+              WHERE (b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?))
+                AND b.month = ?
+                AND (c.user_id IS NULL OR c.user_id = b.user_id)
               ORDER BY c.name COLLATE NOCASE ASC`,
-        args: [userId],
+        args: [ctx.ledgerId, userId, currentMonth],
       },
       {
         sql: `SELECT mr.id, mr.keyword, mr.category_id, mr.type, mr.account_id,
@@ -326,10 +330,11 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
                      c.name AS category_name, c.color AS category_color
               FROM expenses e
               LEFT JOIN categories c ON c.id = e.category_id
-              WHERE e.user_id = ? AND e.type IN ('income', 'expense')
+              WHERE (e.ledger_id = ? OR (e.ledger_id IS NULL AND e.user_id = ?))
+                AND e.type IN ('income', 'expense')
               ORDER BY e.expense_date DESC, e.created_at DESC
               LIMIT 50`,
-        args: [userId],
+        args: [ctx.ledgerId, userId],
       },
     ], 'read');
 
@@ -350,7 +355,27 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       accountId: row.account_id !== null && row.account_id !== undefined ? Number(row.account_id) : null,
     }));
     const expenseCategories = categories.filter((c) => c.kind !== 'income' && c.name !== 'Thu nhập');
-    const unclassifiedExpense = expenseCategories.find((c) => c.name === UNCLASSIFIED_EXPENSE);
+    let unclassifiedExpense = expenseCategories.find((c) => c.name === UNCLASSIFIED_EXPENSE);
+    if (!unclassifiedExpense) {
+      await db.execute({
+        sql: `INSERT OR IGNORE INTO categories (user_id, name, icon, color, kind, budget_group)
+              VALUES (NULL, ?, 'tag', '#64748B', 'expense', 'wants')`,
+        args: [UNCLASSIFIED_EXPENSE],
+      }).catch(() => {});
+      const ensured = await db.execute({
+        sql: 'SELECT id, name, color, kind FROM categories WHERE lower(name) = lower(?) AND (user_id IS NULL OR user_id = ?) LIMIT 1',
+        args: [UNCLASSIFIED_EXPENSE, userId],
+      });
+      if (ensured.rows[0]) {
+        unclassifiedExpense = {
+          id: String(ensured.rows[0].id),
+          name: String(ensured.rows[0].name),
+          color: String(ensured.rows[0].color || '#64748B'),
+          kind: String(ensured.rows[0].kind || 'expense'),
+        };
+        expenseCategories.push(unclassifiedExpense);
+      }
+    }
     const defaultIncome = categories.find((c) => c.name === 'Thu nhập') ?? categories.find((c) => c.kind === 'income');
 
     const isCorrection = !images.length && correctionContext.length > 0;
@@ -568,13 +593,21 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
           }).catch(() => {});
         }
 
+        const inBudgetJar = fastMatch.type === 'expense' && budgetCategories.includes(fastMatch.categoryName);
+        const fastTransactions = saved.transactions.map((tx) => ({
+          ...tx,
+          category_name: String(tx.category_name || UNCLASSIFIED_EXPENSE),
+          in_budget_jar: inBudgetJar,
+          is_unplanned: fastMatch.type === 'expense' && !inBudgetJar,
+        }));
+
         return {
           status: saved.inserted ? 201 : 200,
           body: {
             saved: true,
             intent: fastMatch.type,
             fast_path: true,
-            transactions: saved.transactions,
+            transactions: fastTransactions,
             budgetAlerts,
           },
         };
@@ -632,6 +665,10 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
       return { status: 422, body: { error: 'Không thể áp dụng chỉnh sửa cho các giao dịch chờ lưu.' } };
     }
 
+    const explicitImageCategory = images.length && message
+      ? resolveExplicitImageContextCategory(message, expenseCategories)
+      : null;
+
     const invalidTransactions: string[] = [];
     const transactions = parsed.flatMap((transaction) => {
       const explicit = parsed.length === 1 ? simpleInput : null;
@@ -641,38 +678,51 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
         || (transaction.type === 'income' ? 'Thu nhập' : 'Chi tiêu');
       const normalizedCategory = transaction.category.trim().toLocaleLowerCase('vi');
       const allowedCategories = transaction.type === 'expense' ? expenseCategories : categories;
-      const selectedCategory =
-        allowedCategories.find((row) => row.name.trim().toLocaleLowerCase('vi') === normalizedCategory)
-        ?? (transaction.type === 'expense' ? unclassifiedExpense : defaultIncome);
+      const matchedCategory =
+        (transaction.type === 'expense' && explicitImageCategory)
+          ? explicitImageCategory
+          : allowedCategories.find((row) => row.name.trim().toLocaleLowerCase('vi') === normalizedCategory)
+            ?? (transaction.type === 'expense' ? unclassifiedExpense : defaultIncome);
 
-      if (!selectedCategory || !Number.isSafeInteger(amount) || amount <= 0) {
+      if (!Number.isSafeInteger(amount) || amount <= 0) {
         invalidTransactions.push(transaction.description || transaction.category || 'Giao dịch chưa xác định');
         return [];
       }
 
+      const categoryId = matchedCategory ? matchedCategory.id : null;
+      const categoryName = matchedCategory ? matchedCategory.name : UNCLASSIFIED_EXPENSE;
+      const categoryColor = matchedCategory ? matchedCategory.color : '#64748B';
+      const inBudgetJar = transaction.type === 'expense' && budgetCategories.includes(categoryName);
+
       const merchant = cleanTransactionDescription(transaction.merchant, amount, today);
       const supplementalNote = cleanTransactionDescription((transaction.note ?? '').replace(/^nội dung:\s*/iu, ''), amount, today);
+      const contextTag = explicitImageCategory && message && !supplementalNote && !description.toLocaleLowerCase('vi').includes(message.toLocaleLowerCase('vi'))
+        ? message.trim().slice(0, 120)
+        : '';
       const note = [
         merchant && merchant.toLocaleLowerCase('vi') !== description.toLocaleLowerCase('vi') ? `Đối tác: ${merchant}` : '',
         supplementalNote.toLocaleLowerCase('vi') !== description.toLocaleLowerCase('vi') ? supplementalNote : '',
+        contextTag,
       ].filter(Boolean).join(' · ');
 
       return [{
         amount,
         description: description.slice(0, 160),
         note: note.slice(0, 500),
-        category_id: selectedCategory.id,
-        category_name: selectedCategory.name,
-        category_color: selectedCategory.color,
+        category_id: categoryId,
+        category_name: categoryName,
+        category_color: categoryColor,
         expense_date: explicit?.date ?? transaction.date,
         merchant: transaction.merchant,
         type: transaction.type,
         account_id: selectedAccountId,
+        in_budget_jar: inBudgetJar,
+        is_unplanned: transaction.type === 'expense' && !inBudgetJar,
         category_source: transaction.type === 'income'
           ? 'income_category'
-          : budgetCategories.includes(selectedCategory.name)
+          : inBudgetJar
             ? 'budget_jar'
-            : 'expense_category',
+            : 'unplanned',
       }];
     });
 
@@ -715,10 +765,22 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
           userId,
           ctx.ledgerId,
           transactions
-            .filter((t) => t.type === 'expense')
+            .filter((t): t is typeof t & { category_id: string } => t.type === 'expense' && typeof t.category_id === 'string' && t.category_id.length > 0)
             .map((t) => ({ categoryId: t.category_id, expenseDate: t.expense_date, addedAmount: t.amount })),
         )
       : [];
+
+    const savedWithBudgetFlags = saved.transactions.map((tx) => {
+      const catName = String(tx.category_name || UNCLASSIFIED_EXPENSE);
+      const isExpense = tx.type === 'expense';
+      const inBudgetJar = isExpense && budgetCategories.includes(catName);
+      return {
+        ...tx,
+        category_name: catName,
+        in_budget_jar: inBudgetJar,
+        is_unplanned: isExpense && !inBudgetJar,
+      };
+    });
 
     if (saved.inserted && transactions.length > 0) {
       const first = transactions[0];
@@ -740,7 +802,7 @@ export async function processChatSubmission(input: ChatPipelineInput): Promise<C
         saved: true,
         intent: transactions[0]?.type === 'income' ? 'income' : 'expense',
         fast_path: false,
-        transactions: saved.transactions,
+        transactions: savedWithBudgetFlags,
         budgetAlerts,
       },
     };

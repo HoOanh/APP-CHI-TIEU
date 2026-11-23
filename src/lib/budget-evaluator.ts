@@ -38,6 +38,9 @@ export interface SafeToSpendSummary {
   totalSpent: number;
   totalBudgetRemaining: number;
   dailySafeToSpend: number;
+  dailyConfiguredLimit: number;
+  todaySpent: number;
+  todayRemaining: number;
   daysLeft: number;
   activeJarsCount: number;
 }
@@ -74,7 +77,9 @@ export function evaluateBudgetJar(budget: BudgetJarInput, todayIso: string): Eva
   const effectiveBudget = Math.max(0, baseBudget + rollover);
   const spentAmount = Number(budget.spent_amount) || 0;
   const todaySpent = Number(budget.today_spent) || 0;
-  const warningPercent = Number(budget.warning_percent) || 80;
+  const rawWarningPercent = Number(budget.warning_percent);
+  const warningPercent = Number.isFinite(rawWarningPercent) && rawWarningPercent > 0 ? rawWarningPercent : 101;
+  const onlyAlertOnOverspend = warningPercent > 100;
   const effectiveDailyLimit = Number(budget.daily_limit) > 0
     ? Number(budget.daily_limit)
     : budget.budget_basis === 'daily'
@@ -89,16 +94,21 @@ export function evaluateBudgetJar(budget: BudgetJarInput, todayIso: string): Eva
 
   const alerts: EvaluatedBudgetAlert[] = [];
 
-  if (percentage >= 100) {
+  if (spentAmount > effectiveBudget) {
     alerts.push({
       type: 'monthly_budget',
       title: '🚨 Đã vượt ngân sách tháng',
-      message: spentAmount > effectiveBudget
-        ? `Đã lố ${formatNum(spentAmount - effectiveBudget)}đ (${formatNum(spentAmount)}đ / ${formatNum(effectiveBudget)}đ). Tạm dừng chi ở hũ này ngay!`
-        : `Đã chạm kịch trần 100% ngân sách tháng (${formatNum(effectiveBudget)}đ).`,
+      message: `Đã lố ${formatNum(spentAmount - effectiveBudget)}đ (${formatNum(spentAmount)}đ / ${formatNum(effectiveBudget)}đ). Tạm dừng chi ở hũ này ngay!`,
       severity: 'danger',
     });
-  } else if (percentage >= warningPercent) {
+  } else if (!onlyAlertOnOverspend && percentage >= 100) {
+    alerts.push({
+      type: 'monthly_budget',
+      title: '🚨 Đã chạm kịch trần 100% ngân sách',
+      message: `Đã chạm kịch trần 100% ngân sách tháng (${formatNum(effectiveBudget)}đ).`,
+      severity: 'danger',
+    });
+  } else if (!onlyAlertOnOverspend && percentage >= warningPercent) {
     alerts.push({
       type: 'monthly_budget',
       title: `Đã dùng ${Math.round(percentage)}% ngân sách tháng`,
@@ -117,14 +127,14 @@ export function evaluateBudgetJar(budget: BudgetJarInput, todayIso: string): Eva
         message: `Hôm nay đã chi ${formatNum(todaySpent)}đ / định mức ${formatNum(effectiveDailyLimit)}đ/ngày (vượt lố ${formatNum(todaySpent - effectiveDailyLimit)}đ). Dừng chi hũ này trong hôm nay!`,
         severity: 'danger',
       });
-    } else if (todaySpent === effectiveDailyLimit) {
+    } else if (!onlyAlertOnOverspend && todaySpent === effectiveDailyLimit) {
       alerts.push({
         type: 'daily_limit',
         title: '⚠️ Đã chạm kịch trần chi tiêu hôm nay',
         message: `Hôm nay đã chi hết ${formatNum(todaySpent)}đ / ${formatNum(effectiveDailyLimit)}đ. Chi thêm sẽ bị lố hạn mức ngày!`,
         severity: 'warning',
       });
-    } else if (todaySpent >= effectiveDailyLimit * 0.8) {
+    } else if (!onlyAlertOnOverspend && warningPercent < 100 && todaySpent >= effectiveDailyLimit * (warningPercent / 100)) {
       alerts.push({
         type: 'daily_limit',
         title: 'Sắp chạm hạn mức ngày hôm nay',
@@ -173,25 +183,44 @@ export function evaluateBudgetJar(budget: BudgetJarInput, todayIso: string): Eva
 export function computeSafeToSpend(budgets: BudgetJarInput[], month: string, todayIso: string): SafeToSpendSummary {
   const { daysInMonth, daysLeft } = getMonthDaysRemaining(month, todayIso);
   const divisor = daysLeft > 0 ? daysLeft : Math.max(1, daysInMonth);
+  const dailyJars = budgets.filter((jar) => jar.budget_basis === 'daily');
 
   let totalEffectiveBudget = 0;
   let totalSpent = 0;
   let totalBudgetRemaining = 0;
+  let dailyConfiguredLimit = 0;
+  let todaySpent = 0;
 
-  for (const jar of budgets) {
+  for (const jar of dailyJars) {
     const effective = Math.max(0, (Number(jar.budget_amount) || 0) + (Number(jar.rollover_amount) || 0));
     const spent = Number(jar.spent_amount) || 0;
+    const jarDaily = Number(jar.daily_amount) > 0
+      ? Number(jar.daily_amount)
+      : Number(jar.daily_limit) || 0;
     totalEffectiveBudget += effective;
     totalSpent += spent;
     totalBudgetRemaining += Math.max(0, effective - spent);
+    dailyConfiguredLimit += jarDaily;
+    todaySpent += Number(jar.today_spent) || 0;
   }
+
+  const todayRemaining = dailyJars.length > 0
+    ? Math.max(0, Math.min(totalBudgetRemaining, dailyConfiguredLimit - todaySpent))
+    : 0;
+  const remainingPace = Math.round(totalBudgetRemaining / divisor);
+  const dailySafeToSpend = dailyJars.length > 0
+    ? (dailyConfiguredLimit > 0 ? Math.min(dailyConfiguredLimit, remainingPace) : remainingPace)
+    : 0;
 
   return {
     totalEffectiveBudget: Math.round(totalEffectiveBudget),
     totalSpent: Math.round(totalSpent),
     totalBudgetRemaining: Math.round(totalBudgetRemaining),
-    dailySafeToSpend: Math.round(totalBudgetRemaining / divisor),
+    dailySafeToSpend,
+    dailyConfiguredLimit: Math.round(dailyConfiguredLimit),
+    todaySpent: Math.round(todaySpent),
+    todayRemaining: Math.round(todayRemaining),
     daysLeft: divisor,
-    activeJarsCount: budgets.length,
+    activeJarsCount: dailyJars.length,
   };
 }

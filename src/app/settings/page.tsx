@@ -1,25 +1,27 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { signOut } from 'next-auth/react';
-import dynamic from 'next/dynamic';
-import { useSWRConfig } from 'swr';
 import {
   ArrowLeft,
+  Bell,
+  ChartNoAxesCombined,
+  ChevronRight,
   Database,
-  Download,
   KeyRound,
   LayoutList,
-  Plus,
-  ReceiptText,
-  TrendingDown,
-  Trash2,
+  LogOut,
+  Repeat,
+  SlidersHorizontal,
   UserRound,
-  WalletCards,
-  X,
+  Users,
+  Wallet,
+  WandSparkles,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -27,49 +29,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { MonthPicker } from '@/components/MonthPicker';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/useToast';
-import { formatCurrency, getCurrentMonth, getPercentage } from '@/lib/utils';
-import { CategoryIcon } from '@/components/CategoryIcon';
-import Link from 'next/link';
-import { clearPwaCache } from '@/lib/pwa-cache';
-import { AccountsManager } from '@/components/AccountsManager';
-import { LedgersManager } from '@/components/LedgersManager';
-import { ImportExportManager } from '@/components/ImportExportManager';
-import { ProfileModulesSettings } from '@/components/ProfileModulesSettings';
-import { RecurringRulesManager } from '@/components/RecurringRulesManager';
-import { ShortcutsSettings } from '@/components/ShortcutsSettings';
-import type { EnabledModules, PersonaId } from '@/lib/modules';
-
-const StatsCharts = dynamic(() => import('@/components/StatsCharts').then((module) => module.StatsCharts), { loading: () => <div className="h-[190px] animate-pulse rounded-2xl bg-slate-200/70" /> });
-const AiProvidersSettings = dynamic(() => import('@/components/AiProvidersSettings').then((module) => module.AiProvidersSettings), { loading: () => <div className="h-36 animate-pulse rounded-2xl bg-slate-200/70" /> });
-const PwaReminderSettings = dynamic(() => import('@/components/PwaReminderSettings').then((module) => module.PwaReminderSettings), { loading: () => <div className="h-36 animate-pulse rounded-2xl bg-slate-200/70" /> });
-
-const CATEGORY_COLORS = ['#00B878', '#40C3F9', '#FFB020', '#F65B8D', '#8B5CF6', '#64748B'];
-
-interface Category {
-  id: string;
-  name: string;
-  icon: string;
-  color: string;
-  is_system: number;
-}
 
 interface ProfileResponse {
   name: string;
@@ -77,216 +39,103 @@ interface ProfileResponse {
   image: string;
   isDevelopmentUser: boolean;
   hasPassword?: boolean;
-  primaryPersona?: PersonaId;
-  modules?: EnabledModules;
 }
-
-interface SpendingSummary {
-  total: number;
-  count: number;
-  daily_average: number;
-  by_category: Array<{ category_name: string; category_color: string; total: number }>;
-  by_date: Array<{ date: string; total: number }>;
-}
-type StatsPeriod = 'daily' | 'monthly' | 'quarterly' | 'yearly';
 
 function getInitials(name: string) {
   return name.split(' ').filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase();
 }
 
+const SETTING_GROUPS = [
+  {
+    title: 'Tài chính & Sổ sách',
+    items: [
+      {
+        href: '/settings/ledgers',
+        icon: Users,
+        title: 'Sổ chung & Thành viên',
+        description: 'Sổ cá nhân, gia đình và quyền truy cập',
+      },
+      {
+        href: '/settings/accounts',
+        icon: Wallet,
+        title: 'Ví & Tài khoản',
+        description: 'Ví tiền mặt, ngân hàng và số dư ban đầu',
+      },
+      {
+        href: '/settings/categories',
+        icon: LayoutList,
+        title: 'Danh mục thu chi',
+        description: 'Tên, biểu tượng và màu cho từng danh mục',
+      },
+    ],
+  },
+  {
+    title: 'Tự động hóa & Nhắc nhở',
+    items: [
+      {
+        href: '/settings/automation',
+        icon: Repeat,
+        title: 'Định kỳ & Phím tắt',
+        description: 'Lịch nhắc hóa đơn và phím tắt ghi nhanh',
+      },
+      {
+        href: '/settings/reminders',
+        icon: Bell,
+        title: 'Nhắc nhở & Thông báo',
+        description: 'Giờ nhắc ghi chép mỗi ngày trên thiết bị',
+      },
+    ],
+  },
+  {
+    title: 'Trợ lý & Trải nghiệm',
+    items: [
+      {
+        href: '/settings/ai',
+        icon: WandSparkles,
+        title: 'Trợ lý AI',
+        description: 'Kết nối và chọn mô hình AI đọc hóa đơn',
+      },
+      {
+        href: '/settings/modules',
+        icon: SlidersHorizontal,
+        title: 'Tùy chỉnh tính năng',
+        description: 'Bật hoặc ẩn các mục theo thói quen sử dụng',
+      },
+    ],
+  },
+  {
+    title: 'Dữ liệu & Bảo mật',
+    items: [
+      {
+        href: '/settings/data',
+        icon: Database,
+        title: 'Dữ liệu & Sao lưu',
+        description: 'Xuất, khôi phục và làm mới dữ liệu',
+      },
+    ],
+  },
+] as const;
+
 export default function SettingsPage() {
   const router = useRouter();
   const { showToast } = useToast();
-  const { mutate } = useSWRConfig();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [stats, setStats] = useState({ expenses: 0, debts: 0 });
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
-  const [spendingSummary, setSpendingSummary] = useState<SpendingSummary | null>(null);
-  const [period, setPeriod] = useState<StatsPeriod>('daily');
-  const [month, setMonth] = useState(getCurrentMonth());
-  const [year, setYear] = useState(String(new Date().getFullYear()));
-  const [isLoading, setIsLoading] = useState(true);
-  const [isClearingPwaCache, setIsClearingPwaCache] = useState(false);
-  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
-  const [resetConfirmation, setResetConfirmation] = useState('');
-  const [isResetting, setIsResetting] = useState(false);
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
-  const [dataRevision, setDataRevision] = useState(0);
-  const [isAddingCategory, setIsAddingCategory] = useState(false);
-  const [newCategory, setNewCategory] = useState({
-    name: '',
-    icon: 'category',
-    color: '#40C3F9',
-  });
 
   useEffect(() => {
     const controller = new AbortController();
-    const options = { signal: controller.signal };
-    async function loadSettings() {
-      try {
-        const [categoryResponse, statsResponse, profileResponse] =
-          await Promise.all([
-            fetch('/api/categories', options),
-            fetch('/api/settings/stats', options),
-            fetch('/api/profile', options),
-          ]);
-
-        if (categoryResponse.ok) {
-          setCategories(await categoryResponse.json());
-        }
-        if (statsResponse.ok) {
-          setStats(await statsResponse.json());
-        }
-        if (profileResponse?.ok) setProfile(await profileResponse.json() as ProfileResponse);
-      } catch {
-        if (!controller.signal.aborted) showToast('Không thể tải cài đặt', 'error');
-      } finally {
-        if (!controller.signal.aborted) setIsLoading(false);
-      }
-    }
-
-    void loadSettings();
+    fetch('/api/profile', { signal: controller.signal })
+      .then(async (res) => (res.ok ? (await res.json() as ProfileResponse) : null))
+      .then((data) => {
+        if (data && !controller.signal.aborted) setProfile(data);
+      })
+      .catch(() => {});
     return () => controller.abort();
-  }, [dataRevision, showToast]);
-
-  useEffect(() => {
-    const mobile = window.matchMedia('(max-width: 767px)');
-    const controller = new AbortController();
-    const load = () => {
-      if (!mobile.matches) return;
-      void fetch(`/api/expenses/stats?period=${period}&month=${month}&year=${year}`, { signal: controller.signal })
-        .then(async (response) => {
-          if (!response.ok) throw new Error('Không thể tải thống kê');
-          const result: SpendingSummary = await response.json();
-          if (!controller.signal.aborted) setSpendingSummary(result);
-        })
-        .catch(() => { if (!controller.signal.aborted) showToast('Không thể tải thống kê', 'error'); });
-    };
-    load();
-    mobile.addEventListener('change', load);
-    return () => {
-      controller.abort();
-      mobile.removeEventListener('change', load);
-    };
-  }, [dataRevision, month, period, showToast, year]);
-
-  async function addCategory() {
-    if (!newCategory.name.trim()) return;
-
-    try {
-      const response = await fetch('/api/categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newCategory),
-      });
-      if (!response.ok) throw new Error('Create failed');
-
-      const category = (await response.json()) as Category;
-      setCategories((current) =>
-        [...current, category].sort((a, b) =>
-          a.name.localeCompare(b.name, 'vi'),
-        ),
-      );
-      setNewCategory({ name: '', icon: 'category', color: '#40C3F9' });
-      setIsAddingCategory(false);
-      showToast('Đã thêm danh mục', 'success');
-    } catch {
-      showToast('Tên danh mục đã tồn tại hoặc dữ liệu không hợp lệ', 'error');
-    }
-  }
-
-  async function deleteCategory(category: Category) {
-    if (category.is_system) return;
-
-    try {
-      const response = await fetch(`/api/categories/${category.id}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) {
-        const data = (await response.json()) as { error?: string };
-        throw new Error(data.error);
-      }
-      setCategories((current) =>
-        current.filter((item) => item.id !== category.id),
-      );
-      showToast('Đã xóa danh mục', 'success');
-    } catch {
-      showToast('Không thể xóa danh mục đang có giao dịch', 'error');
-    }
-  }
-
-  async function handleExport() {
-    try {
-      const response = await fetch('/api/export');
-      if (!response.ok) throw new Error('Export failed');
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `chi-tieu-export-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      showToast('Đã xuất dữ liệu', 'success');
-    } catch {
-      showToast('Không thể xuất dữ liệu', 'error');
-    }
-  }
-
-  async function handleClearPwaCache() {
-    setIsClearingPwaCache(true);
-    try {
-      const clearedCacheCount = await clearPwaCache();
-      showToast(
-        clearedCacheCount > 0
-          ? 'Đã xóa bộ nhớ đệm của ARC Irobot'
-          : 'Không có bộ nhớ đệm ứng dụng cần xóa',
-        'success',
-        'Giao dịch, dữ liệu tài khoản và phiên đăng nhập vẫn được giữ nguyên.',
-      );
-    } catch {
-      showToast('Không thể xóa bộ nhớ đệm trên trình duyệt này', 'error');
-    } finally {
-      setIsClearingPwaCache(false);
-    }
-  }
-
-  async function handleResetAccountData() {
-    const confirmation = resetConfirmation.trim();
-    if (isResetting || confirmation !== 'XÓA') return;
-
-    setIsResetting(true);
-    try {
-      const response = await fetch('/api/settings/account-data', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmation }),
-      });
-      if (!response.ok) throw new Error('Không thể xóa dữ liệu tài khoản.');
-
-      setCategories((current) => current.filter((category) => category.is_system));
-      setStats({ expenses: 0, debts: 0 });
-      setSpendingSummary(null);
-      setDataRevision((current) => current + 1);
-      void mutate(
-        (key) => typeof key === 'string' && (key.startsWith('/api/dashboard?') || key.startsWith('/api/expenses/stats?')),
-        undefined,
-        { revalidate: false },
-      );
-      router.refresh();
-      setResetConfirmation('');
-      setIsResetDialogOpen(false);
-      showToast('Đã xóa dữ liệu tài khoản', 'success');
-    } catch {
-      showToast('Không thể xóa dữ liệu tài khoản', 'error');
-    } finally {
-      setIsResetting(false);
-    }
-  }
+  }, []);
 
   async function handleUpdatePassword(event: React.FormEvent) {
     event.preventDefault();
@@ -326,8 +175,8 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-7xl space-y-6 bg-background p-4 pb-nav md:px-8 md:py-7">
-      <header className="flex items-center gap-3 pt-2">
+    <div className="mx-auto min-h-screen max-w-4xl space-y-6 bg-background p-4 pb-nav md:px-8 md:py-7">
+      <header className="flex items-center gap-3 pt-1">
         <Button
           variant="ghost"
           size="icon"
@@ -337,52 +186,80 @@ export default function SettingsPage() {
           <ArrowLeft className="size-5" />
         </Button>
         <div>
-          <h1 className="text-xl font-bold md:text-2xl">Hồ sơ & cài đặt</h1>
-          <p className="hidden text-sm text-muted-foreground md:block">
-            Quản lý AI, danh mục và dữ liệu tài khoản
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 md:text-2xl">Hồ sơ &amp; Cài đặt</h1>
+          <p className="mt-0.5 text-xs text-slate-500 md:text-sm">
+            Tài khoản, sổ chi tiêu và các tùy chỉnh cá nhân
           </p>
         </div>
       </header>
 
-      <div className="md:grid md:grid-cols-[minmax(0,1fr)] xl:grid-cols-[190px_minmax(0,1fr)] xl:gap-7">
-        <nav aria-label="Mục cài đặt" className="sticky top-6 hidden h-fit rounded-2xl border border-slate-200 bg-white p-2 xl:block">
-          {[
-            ['#ho-so', 'Hồ sơ'], ['#nhu-cau', 'Nhu cầu & Tính năng'], ['#so-chung', 'Sổ chung'], ['#vi-tien', 'Ví tiền'],
-            ['#ai-ca-nhan', 'AI cá nhân'], ['#nhac-nho', 'Nhắc nhở'], ['#danh-muc', 'Danh mục'], ['#du-lieu', 'Dữ liệu'],
-          ].map(([href, label]) => <a key={href} href={href} className="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{label}</a>)}
-        </nav>
-        <div className="min-w-0 space-y-6">
-      <section id="ho-so" className="scroll-mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <div className="flex items-center gap-3 p-5">
-          <Avatar size="lg" className="size-14">
+      <section className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white">
+        <div className="flex flex-wrap items-center gap-3.5 p-5">
+          <Avatar size="lg" className="size-14 ring-1 ring-slate-200/80">
             {profile?.image ? <AvatarImage src={profile.image} alt={profile.name} /> : null}
-            <AvatarFallback className="bg-emerald-50 text-base font-semibold text-primary">
+            <AvatarFallback className="bg-emerald-50 text-base font-semibold text-[#00a970]">
               {getInitials(profile?.name || 'Người dùng') || <UserRound className="size-5" />}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-semibold text-slate-800">{profile?.name || 'Đang tải tài khoản...'}</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{profile?.email || '—'}</p>
+            <p className="truncate text-base font-semibold text-slate-900">{profile?.name || 'Đang tải tài khoản…'}</p>
+            <p className="mt-0.5 truncate text-xs text-slate-500">{profile?.email || '—'}</p>
           </div>
-          {!profile?.isDevelopmentUser && (
+          {!profile?.isDevelopmentUser ? (
             <div className="flex shrink-0 items-center gap-2">
-              <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setIsPasswordDialogOpen(true)}>
+              <Button variant="outline" size="sm" className="rounded-xl border-slate-200 text-slate-700" onClick={() => setIsPasswordDialogOpen(true)}>
                 <KeyRound className="size-3.5" />
-                <span className="hidden sm:inline">{profile?.hasPassword ? 'Đổi mật khẩu' : 'Tạo mật khẩu'}</span>
+                <span>{profile?.hasPassword ? 'Đổi mật khẩu' : 'Tạo mật khẩu'}</span>
               </Button>
-              <Button variant="outline" size="sm" className="rounded-xl text-destructive hover:bg-rose-50 hover:text-destructive" onClick={() => signOut({ callbackUrl: '/login' })}>
-                Đăng xuất
+              <Button variant="outline" size="sm" className="rounded-xl border-slate-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={() => signOut({ callbackUrl: '/login' })}>
+                <LogOut className="size-3.5" />
+                <span className="hidden sm:inline">Đăng xuất</span>
               </Button>
             </div>
-          )}
+          ) : null}
         </div>
-        <div id="thong-ke" className="grid grid-cols-3 md:hidden divide-x border-t border-slate-100 bg-slate-50/70">
-          <ProfileMetric label="Chi tháng này" value={spendingSummary ? formatCurrency(spendingSummary.total) : '—'} tone="rose" />
-          <ProfileMetric label="Giao dịch" value={spendingSummary ? String(spendingSummary.count) : '—'} tone="slate" />
-          <ProfileMetric label="TB mỗi ngày" value={spendingSummary ? formatCurrency(spendingSummary.daily_average) : '—'} tone="emerald" />
-        </div>
-        <Link href="/stats" className="hidden border-t border-slate-100 px-5 py-3 text-sm font-medium text-emerald-800 hover:bg-slate-50 md:block">Xem thống kê chi tiêu →</Link>
+        <Link
+          href="/stats"
+          className="flex items-center justify-between border-t border-slate-100 bg-slate-50/70 px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-emerald-50/60 hover:text-[#00a970]"
+        >
+          <span className="flex items-center gap-2.5">
+            <ChartNoAxesCombined className="size-4 text-[#00a970]" strokeWidth={1.8} />
+            Xem báo cáo chi tiêu &amp; tiết kiệm
+          </span>
+          <ChevronRight className="size-4 text-slate-400" />
+        </Link>
       </section>
+
+      <div className="space-y-5">
+        {SETTING_GROUPS.map((group) => (
+          <section key={group.title} className="space-y-2">
+            <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              {group.title}
+            </h2>
+            <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200/90 bg-white">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className="group flex items-center gap-3.5 px-4 py-3.5 transition hover:bg-slate-50/80 sm:px-5"
+                  >
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200/70 bg-slate-50 text-slate-600 transition group-hover:border-emerald-200 group-hover:bg-emerald-50/70 group-hover:text-[#00a970]">
+                      <Icon className="size-[18px]" strokeWidth={1.75} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-900">{item.title}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">{item.description}</p>
+                    </div>
+                    <ChevronRight className="size-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
 
       <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
         <DialogContent className="max-w-md rounded-2xl">
@@ -391,7 +268,7 @@ export default function SettingsPage() {
             <DialogDescription>
               {profile?.hasPassword
                 ? 'Nhập mật khẩu hiện tại và mật khẩu mới (tối thiểu 10 ký tự).'
-                : 'Tạo mật khẩu để có thể đăng nhập bằng Email ngoài Google.'}
+                : 'Tạo mật khẩu để đăng nhập bằng Email ngoài Google.'}
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={handleUpdatePassword}>
@@ -434,272 +311,6 @@ export default function SettingsPage() {
           </form>
         </DialogContent>
       </Dialog>
-
-      <section className="space-y-5 md:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <div><p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#00a970]">Phân tích</p><h2 className="mt-0.5 text-lg font-semibold tracking-[-0.03em] text-slate-800">Thống kê chi tiêu</h2></div>
-          {period === 'daily' ? <MonthPicker month={month} onChange={setMonth} /> : <div className="flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700"><button type="button" className="px-2" onClick={() => setYear(String(Number(year) - 1))}>‹</button><span className="min-w-12 text-center">{period === 'yearly' ? '5 năm' : year}</span><button type="button" className="px-2" onClick={() => setYear(String(Number(year) + 1))}>›</button></div>}
-        </div>
-        <Tabs value={period} onValueChange={(value) => setPeriod(value as StatsPeriod)}><TabsList className="grid w-full grid-cols-4 rounded-xl bg-slate-200/60 p-1"><TabsTrigger value="daily" className="rounded-lg text-xs">Tháng</TabsTrigger><TabsTrigger value="monthly" className="rounded-lg text-xs">Năm</TabsTrigger><TabsTrigger value="quarterly" className="rounded-lg text-xs">Quý</TabsTrigger><TabsTrigger value="yearly" className="rounded-lg text-xs">5 năm</TabsTrigger></TabsList></Tabs>
-        <section className="overflow-hidden rounded-[22px] bg-[#344554] p-5 text-white shadow-[0_18px_36px_-25px_rgba(39,55,73,0.8)]">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">Tổng chi tiêu</p>
-          <p className="mt-2 text-[31px] font-semibold leading-none tracking-[-0.055em] tabular-nums">{formatCurrency(spendingSummary?.total || 0)}</p>
-          <div className="mt-4 flex items-center justify-between border-t border-white/15 pt-3 text-xs"><span className="flex items-center gap-1.5 text-white/65"><TrendingDown className="size-3.5 text-rose-300" />{period === 'daily' ? month : period === 'monthly' ? year : period === 'quarterly' ? `Quý theo năm ${year}` : '5 năm gần đây'}</span><span className="font-medium text-white/80">{spendingSummary?.count || 0} giao dịch</span></div>
-        </section>
-        <section className="grid grid-cols-2 divide-x divide-slate-200 rounded-2xl border border-slate-200 bg-white py-3"><ProfileStat icon={ReceiptText} label="Trung bình" value={formatCurrency(spendingSummary?.daily_average || 0)} suffix={period === 'daily' ? '/ ngày' : '/ kỳ'} /><ProfileStat icon={WalletCards} label="Danh mục nhiều nhất" value={spendingSummary?.by_category[0]?.category_name || 'Chưa có'} suffix={spendingSummary?.by_category[0] ? formatCurrency(spendingSummary.by_category[0].total) : ''} /></section>
-        {spendingSummary && spendingSummary.total > 0 ? <>
-          <StatsCharts byDate={spendingSummary.by_date} period={period} total={spendingSummary.total} />
-          <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-100 px-4 py-3"><h2 className="text-[15px] font-semibold text-slate-800">Cơ cấu chi tiêu</h2><p className="mt-0.5 text-xs text-slate-400">Danh mục theo tỷ trọng trong kỳ đã chọn</p></div><div className="divide-y divide-slate-100">{spendingSummary.by_category.map((item) => <ProfileCategoryRow key={item.category_name} item={item} total={spendingSummary.total} />)}</div></section>
-        </> : <p className="rounded-2xl border border-slate-200 bg-white py-10 text-center text-sm text-slate-400">Chưa có khoản chi trong tháng này.</p>}
-      </section>
-
-      {profile?.primaryPersona && profile?.modules ? (
-        <ProfileModulesSettings
-          key={`${dataRevision}-${profile.primaryPersona}`}
-          initialPersona={profile.primaryPersona}
-          initialModules={profile.modules}
-          onModulesUpdated={(nextModules) => setProfile((current) => current ? { ...current, modules: nextModules } : current)}
-        />
-      ) : null}
-
-      <LedgersManager key={`ledgers-${dataRevision}`} />
-
-      <AccountsManager key={`accounts-${dataRevision}`} />
-
-      <div id="ai-ca-nhan" className="scroll-mt-6"><AiProvidersSettings key={dataRevision} /></div>
-
-      <ShortcutsSettings key={`shortcuts-${dataRevision}`} />
-
-      <RecurringRulesManager key={`recurring-${dataRevision}`} />
-
-      <div id="nhac-nho" className="scroll-mt-6"><PwaReminderSettings key={dataRevision} /></div>
-
-      <div className="grid gap-6">
-
-        <Card id="danh-muc" className="scroll-mt-6 rounded-2xl border-slate-200 bg-white">
-          <CardHeader className="flex flex-row items-center justify-between p-5 pb-2">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-                <LayoutList className="size-4 text-rose-500" /> Danh mục
-              </CardTitle>
-              <CardDescription className="mt-1 text-xs">
-                Một danh sách dùng chung cho giao dịch và hũ chi tiêu
-              </CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsAddingCategory((current) => !current)}
-              className="size-10 rounded-full bg-primary/10 text-primary"
-            >
-              {isAddingCategory ? (
-                <X className="size-4" />
-              ) : (
-                <Plus className="size-4" />
-              )}
-            </Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            {isAddingCategory && (
-              <div className="mx-5 mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="flex gap-2">
-                  <CategoryIcon name={newCategory.name || 'Danh mục'} color={newCategory.color} className="size-10 rounded-xl" iconClassName="size-4" />
-                  <Input
-                    value={newCategory.name}
-                    onChange={(event) => setNewCategory((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Tên danh mục"
-                    className="h-10 rounded-xl"
-                  />
-                  <Button size="icon" onClick={addCategory} disabled={!newCategory.name.trim()} className="size-10 shrink-0 rounded-xl">
-                    <Plus className="size-4" />
-                  </Button>
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <span className="text-[11px] font-medium text-muted-foreground">Màu hiển thị</span>
-                  <div className="flex gap-2">
-                    {CATEGORY_COLORS.map((color) => (
-                      <button
-                        key={color}
-                        type="button"
-                        aria-label={`Chọn màu ${color}`}
-                        onClick={() => setNewCategory((current) => ({ ...current, color }))}
-                        className={`size-5 rounded-full ring-offset-2 transition ${newCategory.color === color ? 'ring-2 ring-slate-500' : ''}`}
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-            <ScrollArea className="h-[260px]">
-              <div className="divide-y divide-border px-5">
-                {isLoading ? (
-                  <div className="py-8 text-center text-xs text-muted-foreground">
-                    Đang tải...
-                  </div>
-                ) : (
-                  categories.map((category) => (
-                    <div
-                      key={category.id}
-                      className="group flex min-h-14 items-center justify-between py-2"
-                    >
-                      <div className="flex items-center gap-3">
-                        <CategoryIcon name={category.name} color={category.color} className="size-9 rounded-xl" iconClassName="size-4" />
-                        <div>
-                          <span className="block text-sm font-medium">
-                            {category.name}
-                          </span>
-                          {Boolean(category.is_system) && (
-                            <span className="block text-[10px] text-muted-foreground">
-                              Mặc định
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {!category.is_system && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => deleteCategory(category)}
-                          className="size-9 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-
-        <Card id="du-lieu" className="scroll-mt-6 rounded-2xl border-slate-200 bg-white">
-          <CardHeader className="p-5 pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-              <Database className="size-4 text-blue-500" /> Dữ liệu & lưu trữ
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-5 pt-3 sm:grid-cols-[1fr_1fr_2fr]">
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <div className="text-2xl font-bold tabular-nums">
-                {stats.expenses}
-              </div>
-              <div className="text-xs text-muted-foreground">Giao dịch</div>
-            </div>
-            <div className="rounded-2xl border border-border bg-background p-4">
-              <div className="text-2xl font-bold tabular-nums">
-                {stats.debts}
-              </div>
-              <div className="text-xs text-muted-foreground">Khoản nợ</div>
-            </div>
-            <Button
-              variant="outline"
-              className="h-full min-h-14 rounded-2xl border-border"
-              onClick={handleExport}
-            >
-              <Download className="size-4" /> Xuất toàn bộ dữ liệu JSON
-            </Button>
-            <ImportExportManager onRestored={() => setDataRevision((v) => v + 1)} />
-            <div className="flex flex-col gap-3 border-t border-border pt-4 sm:col-span-full sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Làm sạch dữ liệu đã lưu trên tài khoản và tiếp tục dùng cùng tài khoản đăng nhập.
-              </p>
-              <AlertDialog
-                open={isResetDialogOpen}
-                onOpenChange={(open) => {
-                  if (isResetting) return;
-                  if (!open) setResetConfirmation('');
-                  setIsResetDialogOpen(open);
-                }}
-              >
-                <AlertDialogTrigger asChild>
-                  <Button type="button" variant="destructive" className="min-h-11 rounded-2xl">
-                    <Trash2 className="size-4" /> Xóa dữ liệu tài khoản
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Xóa dữ liệu tài khoản?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Giao dịch, ngân sách, khoản nợ, danh mục tự tạo, cấu hình AI và lịch nhắc sẽ bị xóa vĩnh viễn.
-                      Phiên đăng nhập và danh mục mặc định được giữ lại. Bản nháp offline vẫn nằm trên thiết bị.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <form
-                    className="grid gap-4"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void handleResetAccountData();
-                    }}
-                  >
-                    <div className="grid gap-2">
-                      <label htmlFor="reset-account-confirmation" className="text-sm font-medium">
-                        Nhập <strong>XÓA</strong> để xác nhận
-                      </label>
-                      <Input
-                        id="reset-account-confirmation"
-                        value={resetConfirmation}
-                        onChange={(event) => setResetConfirmation(event.target.value)}
-                        disabled={isResetting}
-                        autoComplete="off"
-                      />
-                    </div>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel type="button" disabled={isResetting}>Hủy</AlertDialogCancel>
-                      <Button type="submit" variant="destructive" disabled={isResetting || resetConfirmation.trim() !== 'XÓA'}>
-                        {isResetting ? 'Đang xóa...' : 'Xóa vĩnh viễn'}
-                      </Button>
-                    </AlertDialogFooter>
-                  </form>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-3xl border-border bg-white shadow-sm">
-          <CardHeader className="p-5 pb-2">
-            <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-              <Database className="size-4 text-emerald-600" /> Ứng dụng & bộ nhớ đệm
-            </CardTitle>
-            <CardDescription className="text-xs leading-relaxed">
-              Trên iPhone, mở ARC Irobot bằng Safari, chọn Chia sẻ → Thêm vào Màn hình chính để dùng như ứng dụng. Tài nguyên giao diện sẽ được lưu trên thiết bị để lần mở sau nhanh hơn.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3 p-5 pt-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="max-w-xl text-xs leading-relaxed text-muted-foreground">
-              Xóa các tệp giao diện đã lưu nếu cần tải lại bản mới. Thao tác này không xóa giao dịch, dữ liệu tài khoản hay phiên đăng nhập.
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-11 shrink-0 rounded-2xl border-border"
-              disabled={isClearingPwaCache}
-              onClick={() => void handleClearPwaCache()}
-            >
-              <Trash2 className="size-4" />
-              {isClearingPwaCache ? 'Đang xóa...' : 'Xóa bộ nhớ đệm'}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-      </div>
-      </div>
     </div>
   );
-}
-
-function ProfileMetric({ label, value, tone }: { label: string; value: string; tone: 'rose' | 'slate' | 'emerald' }) {
-  const color = tone === 'rose' ? 'text-rose-500' : tone === 'emerald' ? 'text-emerald-600' : 'text-slate-700';
-  return <div className="min-w-0 px-3 py-3 text-center"><p className="truncate text-[10px] text-muted-foreground">{label}</p><p className={`mt-1 truncate text-sm font-semibold tabular-nums ${color}`}>{value}</p></div>;
-}
-
-function ProfileStat({ icon: Icon, label, value, suffix }: { icon: typeof ReceiptText; label: string; value: string; suffix: string }) {
-  return <div className="min-w-0 px-3.5"><p className="flex items-center gap-1.5 text-[11px] text-slate-400"><Icon className="size-3.5 text-[#00a970]" />{label}</p><p className="mt-1 truncate text-[15px] font-semibold text-slate-700">{value}</p><p className="mt-0.5 truncate text-[11px] text-slate-400">{suffix}</p></div>;
-}
-
-function ProfileCategoryRow({ item, total }: { item: SpendingSummary['by_category'][number]; total: number }) {
-  const percentage = getPercentage(item.total, total);
-  return <div className="px-4 py-3.5"><div className="flex items-center gap-3"><CategoryIcon name={item.category_name} color={item.category_color} className="size-9 rounded-xl" iconClassName="size-4" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-slate-700">{item.category_name}</p><p className="mt-0.5 text-[11px] text-slate-400">{Math.round(percentage)}%</p></div><p className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(item.total)}</p></div><div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[#00bc7c]" style={{ width: `${percentage}%` }} /></div></div>;
 }

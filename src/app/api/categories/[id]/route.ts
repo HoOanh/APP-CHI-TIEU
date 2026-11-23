@@ -26,10 +26,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message || 'Dữ liệu danh mục không hợp lệ' }, { status: 400 });
     }
     const { name, icon, color, kind } = parsed.data;
-    
+
     const db = await getDb();
     const existing = await db.execute({
-      sql: 'SELECT id, icon, color, kind FROM categories WHERE id = ? AND user_id = ?',
+      sql: 'SELECT id, user_id, name, icon, color, kind FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
       args: [id, user.id],
     });
     const current = existing.rows[0];
@@ -38,36 +38,56 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     }
 
     const duplicate = await db.execute({
-      sql: `SELECT id FROM categories
-            WHERE (user_id IS NULL OR user_id = ?) AND lower(name) = lower(?) AND id <> ?
+      sql: `SELECT c.id FROM categories c
+            LEFT JOIN category_overrides co ON co.category_id = c.id AND co.user_id = ?
+            WHERE (c.user_id IS NULL OR c.user_id = ?) AND lower(COALESCE(co.name, c.name)) = lower(?) AND c.id <> ?
             LIMIT 1`,
-      args: [user.id, name, id],
+      args: [user.id, user.id, name, id],
     });
     if (duplicate.rows[0]) {
       return NextResponse.json({ error: 'Tên danh mục đã tồn tại' }, { status: 409 });
     }
 
-    await db.execute({
-      sql: 'UPDATE categories SET name = ?, icon = ?, color = ?, kind = ? WHERE id = ? AND user_id = ?',
-      args: [
-        name,
-        icon ?? String(current.icon || 'category'),
-        color ?? String(current.color || '#64748b'),
-        kind ?? String(current.kind || 'expense'),
-        id,
-        user.id,
-      ]
-    });
-    
+    const nextIcon = icon ?? String(current.icon || 'tag');
+    const nextColor = color ?? String(current.color || '#64748B');
+    const nextKind = kind ?? String(current.kind || 'expense');
+
+    if (current.user_id === null || current.user_id === undefined) {
+      await db.execute({
+        sql: `INSERT INTO category_overrides (user_id, category_id, name, icon, color, kind)
+              VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT(user_id, category_id) DO UPDATE SET
+                name = excluded.name,
+                icon = excluded.icon,
+                color = excluded.color,
+                kind = excluded.kind`,
+        args: [user.id, id, name, nextIcon, nextColor, nextKind],
+      });
+    } else {
+      await db.execute({
+        sql: 'UPDATE categories SET name = ?, icon = ?, color = ?, kind = ? WHERE id = ? AND user_id = ?',
+        args: [name, nextIcon, nextColor, nextKind, id, user.id],
+      });
+    }
+
     const updated = await db.execute({
-      sql: 'SELECT *, user_id IS NULL as is_system FROM categories WHERE id = ? AND user_id = ?',
-      args: [id, user.id]
+      sql: `SELECT c.id, c.user_id, c.ledger_id,
+                   COALESCE(co.name, c.name) AS name,
+                   COALESCE(co.icon, c.icon) AS icon,
+                   COALESCE(co.color, c.color) AS color,
+                   COALESCE(co.kind, c.kind) AS kind,
+                   c.budget_group, c.created_at,
+                   c.user_id IS NULL AS is_system
+            FROM categories c
+            LEFT JOIN category_overrides co ON co.category_id = c.id AND co.user_id = ?
+            WHERE c.id = ? AND (c.user_id IS NULL OR c.user_id = ?)`,
+      args: [user.id, id, user.id],
     });
 
     if (!updated.rows[0]) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    
+
     return NextResponse.json(updated.rows[0]);
   } catch (error) {
     if (error instanceof Error && /UNIQUE constraint failed/i.test(error.message)) {
@@ -86,7 +106,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
-    
+
     const db = await getDb();
     const categoryResult = await db.execute({
       sql: 'SELECT id FROM categories WHERE id = ? AND user_id = ?',
@@ -98,12 +118,12 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const expenseCountResult = await db.execute({
       sql: 'SELECT COUNT(*) as count FROM expenses WHERE category_id = ? AND user_id = ?',
-      args: [id, user.id]
+      args: [id, user.id],
     });
 
     const budgetCountResult = await db.execute({
       sql: 'SELECT COUNT(*) as count FROM budget_jars WHERE category_id = ? AND user_id = ?',
-      args: [id, user.id]
+      args: [id, user.id],
     });
 
     const expenseCount = Number(expenseCountResult.rows[0]?.count ?? 0);
@@ -112,12 +132,12 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     if (expenseCount > 0 || budgetCount > 0) {
       return NextResponse.json({ error: 'Cannot delete category with existing expenses or budgets' }, { status: 400 });
     }
-    
+
     await db.execute({
       sql: 'DELETE FROM categories WHERE id = ? AND user_id = ?',
-      args: [id, user.id]
+      args: [id, user.id],
     });
-    
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error(error);

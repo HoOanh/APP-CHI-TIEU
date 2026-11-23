@@ -72,9 +72,9 @@ export function ProfileModulesSettings({
           <Layers3 className="size-5" />
         </span>
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Nhu cầu & Tính năng mở rộng</h2>
+          <h2 className="text-base font-semibold text-slate-900">Tùy chỉnh tính năng</h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Chọn nhanh theo hồ sơ hoặc bật/tắt từng module. Dữ liệu đã lưu luôn được giữ nguyên khi tắt module.
+            Chọn nhanh theo nhu cầu hoặc bật/tắt từng tính năng. Dữ liệu đã lưu luôn được giữ lại.
           </p>
         </div>
       </div>

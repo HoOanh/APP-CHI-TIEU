@@ -274,15 +274,21 @@ Trả về một JSON array. Mỗi phần tử:
 - date: YYYY-MM-DD
 - type: "income" hoặc "expense"
 
+ƯU TIÊN CAO NHẤT — ĐỐI CHIẾU NỘI DUNG NGƯỜI DÙNG:
+- Nếu người dùng ghi rõ ngữ cảnh/mục đích chung kèm theo ảnh (ví dụ: "đi chơi với vợ", "chi cho vợ", "hũ Vợ", "về quê", "tiếp khách", ...), BẮT BUỘC phải đối chiếu và gán TẤT CẢ các giao dịch liên quan trong ảnh theo đúng ngữ cảnh/hũ mà người dùng đã nêu!
+- Ví dụ: người dùng gửi 1 hoặc nhiều ảnh gồm 5 giao dịch (ăn uống, đặt phòng, xăng xe, vé...) kèm nội dung "đi chơi với vợ" và trong danh sách có danh mục/hũ "Vợ", thì CẢ 5 giao dịch đó đều PHẢI gom vào category "Vợ" (vẫn giữ từng khoản riêng với description/amount cụ thể), TUYỆT ĐỐI KHÔNG tự ý tách rời sang "Ăn uống", "Xe & xăng" hay các hũ khác.
+- Chỉ tách thành nhiều danh mục khác nhau khi người dùng không nêu ngữ cảnh chung hoặc có ghi rõ từng ảnh/từng khoản thuộc danh mục riêng.
+
 Quy tắc bắt buộc khi phân loại:
-1. Nếu type = "expense", category phải thuộc: ${expenseCategoryList}. Hũ ngân sách hiện có: ${categoryPolicy.preferredExpenseCategories.join(', ') || '(chưa có)'}. Chỉ ưu tiên hũ khi đúng mục đích khoản chi. Dùng "${categoryPolicy.unclassifiedExpense}" nếu không đủ căn cứ phân loại.
+1. Nếu type = "expense", category phải thuộc: ${expenseCategoryList}. Hũ ngân sách hiện có: ${categoryPolicy.preferredExpenseCategories.join(', ') || '(chưa có)'}.
+   - Nếu không có ngữ cảnh gộp từ người dùng và khoản chi không thuộc hũ ngân sách nào, hãy chọn danh mục phù hợp trong ${expenseCategoryList} hoặc dùng "${categoryPolicy.unclassifiedExpense}" cho khoản chi phát sinh ngoài hũ (KHÔNG gượng ép vào một hũ không liên quan).
 2. Nếu type = "income", category PHẢI là một danh mục thu nhập phù hợp trong: ${incomeCategoryList}.
-3. Dùng merchant, description và note/nội dung người dùng để đối chiếu lịch sử trước; ví dụ giao dịch/ghi chú tương tự phải theo danh mục lịch sử nếu danh mục đó được phép ở (1) hoặc (2).
+3. Dùng nội dung người dùng trước, sau đó đối chiếu merchant, description và lịch sử tham chiếu.
 4. Tuyệt đối không bịa danh mục mới, không chọn theo cảm tính và không dùng danh mục thu nhập cho khoản chi.
-Không tự suy diễn "chuyển khoản" là Mua sắm nếu note cho biết mục đích khác.
+Không tự suy diễn "chuyển khoản" là Mua sắm nếu note/nội dung cho biết mục đích khác.
 Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) là ${today}. Nếu nội dung nói "hôm nay" hoặc không nêu ngày thì dùng chính xác ${today}. Ngày viết theo tiếng Việt d/M, dd/MM hoặc "ngày d tháng M" là ngày/tháng; nếu thiếu năm thì dùng năm hiện tại ${today.slice(0, 4)}.
 Chỉ ghi giao dịch thực có số tiền thể hiện rõ; không suy đoán số tiền còn thiếu. Trả [] nếu không nhận diện được giao dịch.
-Không gộp nhiều giao dịch thành một. Loại bỏ các dòng chỉ là số dư, tổng cộng, phí đã nằm trong tổng hoặc giao dịch trùng giữa các ảnh.
+Không gộp nhiều giao dịch thành một khoản tiền duy nhất; giữ đủ từng giao dịch và phân loại thống nhất theo ngữ cảnh người dùng. Loại bỏ các dòng chỉ là số dư, tổng cộng, phí đã nằm trong tổng hoặc giao dịch trùng giữa các ảnh.
 
 Lịch sử tham chiếu:
 ${historyContext || 'Chưa có lịch sử.'}
@@ -315,7 +321,9 @@ export async function parseTransactionsText(
 Mỗi phần tử gồm amount (số nguyên dương; k/nghìn/ngàn=1000, tr/triệu=1000000, bốn mươi lăm nghìn=45000), description, category, merchant, note, date (YYYY-MM-DD), type ("income"|"expense").
 Mô tả chỉ ghi tên khoản thu/chi, bỏ số tiền và ngày. note chỉ ghi thông tin bổ sung rõ ràng, không chép lại câu nhập. Ví dụ "ăn tối ngày 17/11 100k" có amount 100000, description "ăn tối", note rỗng và date là ngày 17/11 trong năm hiện tại.
 Quy tắc danh mục BẮT BUỘC:
-- type = "expense": chọn danh mục chi phù hợp trong: ${categoryPolicy.expenseCategories.join(', ')}. Hũ ngân sách hiện có: ${categoryPolicy.preferredExpenseCategories.join(', ') || '(chưa có)'}. Ưu tiên hũ nếu đúng mục đích khoản chi. Dùng "${categoryPolicy.unclassifiedExpense}" nếu chưa rõ danh mục.
+- type = "expense": chọn danh mục chi phù hợp trong: ${categoryPolicy.expenseCategories.join(', ')}. Hũ ngân sách hiện có: ${categoryPolicy.preferredExpenseCategories.join(', ') || '(chưa có)'}.
+  + Nếu người dùng nêu một ngữ cảnh/mục đích chung cho cả câu (ví dụ "đi chơi với vợ: ăn tối 300k, đổ xăng 100k"), gán tất cả khoản liên quan vào danh mục/hũ chung đó ("Vợ").
+  + Nếu là khoản chi phát sinh không thuộc hũ ngân sách nào và không khớp danh mục cụ thể, dùng "${categoryPolicy.unclassifiedExpense}" (KHÔNG gượng ép vào hũ khác).
 - type = "income": chỉ chọn một danh mục thu nhập phù hợp: ${categoryPolicy.incomeCategories.join(', ') || '(chưa có danh mục)'}.
 Phân loại dựa trên mô tả/note trước, sau đó đối chiếu lịch sử tương tự. Không tự tạo danh mục hoặc chọn danh mục ngoài danh sách:
 ${historyContext || 'Chưa có lịch sử.'}

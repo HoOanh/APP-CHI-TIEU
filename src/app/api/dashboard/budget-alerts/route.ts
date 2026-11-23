@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
         return {
           id: String(row.id),
           budget_amount: Number(row.budget_amount) || 0,
-          warning_percent: Number(row.warning_percent) || 80,
+          warning_percent: Number(row.warning_percent) || 101,
           category_name: String(row.category_name || ''),
           category_color: String(row.category_color || ''),
           spent_amount: Number(row.spent_amount) || 0,
@@ -50,7 +50,11 @@ export async function GET(request: NextRequest) {
         };
       })
       .filter((row) => (
-        (row.budget_amount > 0 && row.spent_amount >= (row.budget_amount * row.warning_percent) / 100)
+        (row.budget_amount > 0 && (
+          row.warning_percent > 100
+            ? row.spent_amount > row.budget_amount
+            : row.spent_amount >= (row.budget_amount * row.warning_percent) / 100
+        ))
         || (row.effective_daily_limit > 0 && row.today_spent > row.effective_daily_limit)
       ));
     return NextResponse.json(rows, { headers: { 'Cache-Control': 'private, no-store' } });

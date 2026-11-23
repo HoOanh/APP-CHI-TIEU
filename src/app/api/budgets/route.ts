@@ -33,8 +33,10 @@ export async function GET(request: NextRequest) {
     const weekEndStr = weekEnd.toISOString().slice(0, 10);
 
     const result = await db.execute({
-      sql: `SELECT b.*, c.name AS category_name, c.icon AS category_icon,
-              c.color AS category_color,
+      sql: `SELECT b.*,
+              COALESCE(co.name, c.name) AS category_name,
+              COALESCE(co.icon, c.icon, 'tag') AS category_icon,
+              COALESCE(co.color, c.color, '#64748B') AS category_color,
               COALESCE(SUM(CASE
                 WHEN e.type = 'expense' AND strftime('%Y-%m', e.expense_date) = b.month
                 THEN e.amount ELSE 0 END), 0) AS spent_amount,
@@ -54,12 +56,13 @@ export async function GET(request: NextRequest) {
               ) AS month_count
             FROM budget_jars b
             LEFT JOIN categories c ON c.id = b.category_id
+            LEFT JOIN category_overrides co ON co.category_id = c.id AND co.user_id = ?
             LEFT JOIN expenses e ON (e.ledger_id = b.ledger_id OR (b.ledger_id IS NULL AND e.user_id = b.user_id))
               AND e.category_id = b.category_id
             WHERE (b.ledger_id = ? OR (b.ledger_id IS NULL AND b.user_id = ?)) AND b.month = ?
-            GROUP BY b.id, c.name, c.icon, c.color
-            ORDER BY c.name`,
-      args: [today, today, weekStartStr, weekEndStr, ledgerId, user.id, month],
+            GROUP BY b.id, COALESCE(co.name, c.name), COALESCE(co.icon, c.icon, 'tag'), COALESCE(co.color, c.color, '#64748B')
+            ORDER BY COALESCE(co.name, c.name)`,
+      args: [today, today, weekStartStr, weekEndStr, user.id, ledgerId, user.id, month],
     });
 
     const enriched = result.rows.map((budget) => {
@@ -78,7 +81,7 @@ export async function GET(request: NextRequest) {
           budget_basis: String(budget.budget_basis || 'monthly'),
           daily_amount: Number(budget.daily_amount) || 0,
           daily_limit: Number(budget.daily_limit) || 0,
-          warning_percent: Number(budget.warning_percent) || 80,
+          warning_percent: Number(budget.warning_percent) || 101,
           frequency_limit: Number(budget.frequency_limit) || 0,
           frequency_period: String(budget.frequency_period || ''),
           spent_amount: Number(budget.spent_amount) || 0,
@@ -131,7 +134,8 @@ export async function POST(request: NextRequest) {
     const monthlyAmount = Number(body.budget_amount);
     const monthDays = getDaysInMonth(month);
     const budgetAmount = budgetBasis === 'daily' ? dailyAmount * budgetDays : monthlyAmount;
-    const warningPercent = Math.min(100, Math.max(1, Number(body.warning_percent) || 80));
+    const rawWarning = Number(body.warning_percent);
+    const warningPercent = Number.isFinite(rawWarning) && rawWarning > 0 ? Math.min(101, Math.max(1, rawWarning)) : 101;
     const dailyLimit = Math.max(0, Number(body.daily_limit) || 0);
     const frequencyLimit = Math.max(0, Number(body.frequency_limit) || 0);
     const frequencyPeriod = typeof body.frequency_period === 'string' ? body.frequency_period : '';

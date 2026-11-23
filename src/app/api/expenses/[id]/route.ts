@@ -4,6 +4,7 @@ import { getBudgetAlert } from '@/lib/budget-alert';
 import { getCurrentUser } from '@/lib/current-user';
 import { assertLedgerAccess, LedgerAccessError } from '@/lib/ledger-access';
 import { ensureUserLedgerAndAccount } from '@/lib/ledger-context';
+import { UNCLASSIFIED_EXPENSE } from '@/lib/schema';
 import { getTagsForExpenses, syncExpenseTags } from '@/lib/tags';
 
 interface RouteContext { params: Promise<{ id: string }> }
@@ -38,7 +39,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const description = typeof payload.description === 'string' ? payload.description.trim() : '';
     const type = payload.type === 'income' || payload.type === 'transfer' ? payload.type : 'expense';
     const isTransfer = type === 'transfer';
-    const categoryId = payload.category_id === null || payload.category_id === undefined || payload.category_id === ''
+    const categoryId = payload.category_id === null || payload.category_id === undefined || payload.category_id === '' || payload.category_id === 'unclassified'
       ? null
       : Number(payload.category_id);
     const expenseDate = payload.expense_date;
@@ -50,7 +51,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       || description.length > 160
       || !isValidDate(expenseDate)
       || !['income', 'expense', 'transfer'].includes(String(payload.type))
-      || (!isTransfer && (!categoryId || !Number.isInteger(categoryId) || categoryId <= 0))
+      || (!isTransfer && categoryId !== null && (!Number.isInteger(categoryId) || categoryId <= 0))
     ) {
       return NextResponse.json({ error: 'Thông tin giao dịch chưa hợp lệ.' }, { status: 400 });
     }
@@ -82,6 +83,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     if (!Number.isInteger(resolvedAccountId) || resolvedAccountId <= 0) {
       return NextResponse.json({ error: 'Ví nguồn không hợp lệ.' }, { status: 400 });
     }
+    let finalCategoryId: number | null = isTransfer ? null : categoryId;
     if (isTransfer) {
       if (!resolvedToAccountId || resolvedToAccountId === resolvedAccountId) {
         return NextResponse.json({ error: 'Chọn ví đích khác ví nguồn.' }, { status: 400 });
@@ -93,14 +95,20 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       if (accCheck.rows.length < 2) {
         return NextResponse.json({ error: 'Ví nguồn hoặc ví đích không hợp lệ.' }, { status: 400 });
       }
-    } else {
+    } else if (finalCategoryId !== null) {
       const category = await db.execute({
         sql: 'SELECT id FROM categories WHERE id = ? AND (user_id IS NULL OR user_id = ?)',
-        args: [categoryId!, user.id],
+        args: [finalCategoryId, user.id],
       });
       if (!category.rows[0]) {
         return NextResponse.json({ error: 'Danh mục không hợp lệ.' }, { status: 400 });
       }
+    } else if (type === 'expense') {
+      const fallbackCat = await db.execute({
+        sql: 'SELECT id FROM categories WHERE lower(name) = lower(?) AND (user_id IS NULL OR user_id = ?) LIMIT 1',
+        args: [UNCLASSIFIED_EXPENSE, user.id],
+      });
+      finalCategoryId = fallbackCat.rows[0] ? Number(fallbackCat.rows[0].id) : null;
     }
 
     await db.execute({
@@ -114,7 +122,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
         amount,
         description,
         typeof payload.note === 'string' ? payload.note.trim() : '',
-        isTransfer ? null : categoryId,
+        finalCategoryId,
         resolvedAccountId,
         resolvedToAccountId,
         expenseDate,
@@ -130,7 +138,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     const updated = await db.execute({
       sql: `
-        SELECT e.*, c.name AS category_name, c.icon AS category_icon, c.color AS category_color,
+        SELECT e.*, COALESCE(c.name, '${UNCLASSIFIED_EXPENSE}') AS category_name,
+               COALESCE(c.icon, 'tag') AS category_icon,
+               COALESCE(c.color, '#64748B') AS category_color,
                a1.name AS account_name, a2.name AS to_account_name,
                cu.name AS created_by_name, cu.avatar AS created_by_avatar
         FROM expenses e
@@ -149,18 +159,19 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     const sameBucketMonth =
       previous.type === 'expense'
-      && categoryId !== null
-      && Number(previous.category_id) === categoryId
+      && finalCategoryId !== null
+      && Number(previous.category_id) === finalCategoryId
       && String(previous.expense_date).slice(0, 7) === expenseDate.slice(0, 7);
     const addedDelta = sameBucketMonth
       ? Math.max(0, amount - (Number(previous.amount) || 0))
       : amount;
 
-    const budgetAlert = type === 'expense' && categoryId !== null && addedDelta > 0
+    const budgetAlert = type === 'expense' && finalCategoryId !== null && addedDelta > 0
       ? await getBudgetAlert({
           db,
           userId: user.id,
-          categoryId,
+          ledgerId: targetLedgerId,
+          categoryId: finalCategoryId,
           expenseDate,
           addedAmount: addedDelta,
         })

@@ -4,7 +4,7 @@ export interface ChatTransaction {
   amount: number;
   description: string;
   note: string;
-  category_id: string;
+  category_id: string | null;
   expense_date: string;
   type: 'income' | 'expense';
   account_id?: number | null;

@@ -89,7 +89,7 @@ export function PendingRecurringBanner({ onResolved }: { onResolved?: () => void
           <BellRing className="size-4 text-amber-600" />
           Nhắc hẹn đến hạn ({items.length}) · Chờ bạn duyệt
         </p>
-        <Link href="/settings#nhac-dinh-ky" className="text-xs font-medium text-amber-800 hover:underline">
+        <Link href="/settings/automation#nhac-dinh-ky" className="text-xs font-medium text-amber-800 hover:underline">
           Quản lý lịch →
         </Link>
       </div>

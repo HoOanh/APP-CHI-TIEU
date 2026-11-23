@@ -42,10 +42,11 @@ export function BudgetMobileGrid({
           : budget.budget_basis === 'daily'
             ? budget.daily_amount
             : 0;
+        const onlyAlertOnOverspend = budget.warning_percent > 100;
         const isDailyOver = effectiveDailyLimit > 0 && budget.today_spent > effectiveDailyLimit;
-        const isOver = pct >= 100;
+        const isOver = onlyAlertOnOverspend ? budget.spent_amount > effectiveBudget : pct >= 100;
         const hasDanger = isOver || isDailyOver || Boolean(budget.alerts?.some((alert) => alert.severity === 'danger'));
-        const isWarning = !hasDanger && (pct >= budget.warning_percent || Boolean(budget.alerts?.some((alert) => alert.severity === 'warning')));
+        const isWarning = !hasDanger && ((!onlyAlertOnOverspend && pct >= budget.warning_percent) || Boolean(budget.alerts?.some((alert) => alert.severity === 'warning')));
         const hasLimits = effectiveDailyLimit > 0 || budget.frequency_limit > 0;
 
         return (
@@ -63,7 +64,7 @@ export function BudgetMobileGrid({
             <CardContent className="p-4">
               <div className="mb-3 flex items-start justify-between">
                 <div className="flex items-center gap-3">
-                  <CategoryIcon name={budget.category_name} color={budget.category_color} />
+                  <CategoryIcon name={budget.category_name} icon={budget.category_icon} color={budget.category_color} />
                   <div>
                     <p className="font-semibold text-foreground">{budget.category_name}</p>
                     <p className="text-xs text-muted-foreground tabular-nums">

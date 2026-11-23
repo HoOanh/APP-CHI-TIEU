@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
           item.budget_basis || 'monthly',
           item.daily_amount || 0,
           item.budget_days || 0,
-          Math.min(100, Math.max(1, Number(item.warning_percent) || 80)),
+          Math.min(101, Math.max(1, Number(item.warning_percent) || 101)),
           Math.max(0, Number(item.daily_limit) || 0),
           Math.max(0, Number(item.frequency_limit) || 0),
           item.frequency_period || '',

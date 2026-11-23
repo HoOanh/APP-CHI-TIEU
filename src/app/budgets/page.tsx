@@ -23,7 +23,7 @@ import {
   Wallet,
   Siren,
   FileJson2,
-  Sparkles,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { BudgetDesktopTable } from '@/components/budgets/BudgetDesktopTable';
 import { BudgetMobileGrid } from '@/components/budgets/BudgetMobileGrid';
@@ -70,7 +70,7 @@ export default function BudgetsPage() {
     budget_basis: 'monthly' as 'monthly' | 'daily',
     daily_amount: '',
     budget_days: String(getDaysInMonth(getCurrentMonth())),
-    warning_percent: '80',
+    warning_percent: '101',
     daily_limit: '',
     frequency_limit: '',
     frequency_period: '',
@@ -85,7 +85,7 @@ export default function BudgetsPage() {
     budget_basis: watchedForm.budget_basis ?? 'monthly',
     daily_amount: watchedForm.daily_amount ?? '',
     budget_days: watchedForm.budget_days ?? String(getDaysInMonth(getCurrentMonth())),
-    warning_percent: watchedForm.warning_percent ?? '80',
+    warning_percent: watchedForm.warning_percent ?? '101',
     daily_limit: watchedForm.daily_limit ?? '',
     frequency_limit: watchedForm.frequency_limit ?? '',
     frequency_period: watchedForm.frequency_period ?? '',
@@ -104,7 +104,7 @@ export default function BudgetsPage() {
       budget_basis: 'monthly',
       daily_amount: '',
       budget_days: String(getDaysInMonth(month)),
-      warning_percent: '80',
+      warning_percent: '101',
       daily_limit: '',
       frequency_limit: '',
       frequency_period: '',
@@ -435,9 +435,9 @@ export default function BudgetsPage() {
               variant="outline"
               size="sm"
               onClick={() => setIsSplitOpen(true)}
-              className="rounded-xl h-8 text-xs font-medium border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+              className="h-8 rounded-xl border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
-              <Sparkles className="w-3 h-3 mr-1.5" />
+              <SlidersHorizontal className="mr-1.5 h-3 w-3 text-[#00a970]" />
               Chia hũ lương
             </Button>
             <Button
